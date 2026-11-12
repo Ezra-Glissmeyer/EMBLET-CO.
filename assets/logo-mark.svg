@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Emblet Co.">
+  <circle cx="32" cy="32" r="30" fill="#F5EBDD" stroke="#4F6B4A" stroke-width="3"/>
+  <path d="M8 46 L22 30 L30 38 L40 24 L56 46 Z" fill="#9CAF88"/>
+  <path d="M40 24 L46 32 L43 31 L40 34 L37 30 Z" fill="#F5EBDD" opacity=".9"/>
+  <path d="M8 46 H56 A30 30 0 0 1 8 46 Z" fill="#4F6B4A"/>
+  <path d="M32 9 C36 15 38 18 36 22 C35 25 33 26 32 26 C30 26 27.5 24.5 28 21 C28.4 18.5 30 17 30.5 14.5 C31 16.5 32.5 17 33 16 C33.6 14 32.8 11.5 32 9 Z" fill="#C8A27A"/>
+  <path d="M32 18 C33.5 20 34 21.5 33.2 23 C32.6 24 31 24 30.6 22.8 C30.2 21.5 31.2 20 32 18 Z" fill="#F5EBDD"/>
+</svg>
