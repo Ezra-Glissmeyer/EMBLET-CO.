@@ -722,6 +722,22 @@ begin
     end if;
   end loop;
 
+  -- Yesterday's Cabin Cocoa pour (scripted, so the QA-hold story never depends on what the simulation left over).
+  select id into function_item from items where sku = 'CND-COCOA';
+  perform app._transfer(b.component_id, 'WHS', 'WKS', least(app.on_hand(b.component_id, 'WHS'), 72 * b.qty_per - app.on_hand(b.component_id, 'WKS')),
+                        'Stage for production', app.day_start(v_today - 1) + interval '6 hours 30 minutes', u_prod)
+     from bom_lines b
+    where b.parent_id = function_item and app.on_hand(b.component_id, 'WKS') < 72 * b.qty_per and app.on_hand(b.component_id, 'WHS') > 0;
+  select floor(min(app.on_hand(b.component_id, 'WKS') / b.qty_per)) into v_oh from bom_lines b where b.parent_id = function_item;
+  v_oh := least(72, floor(v_oh / 12) * 12);
+  if v_oh >= 24 then
+    v_mo := app._create_mo(function_item, v_oh, 'WKS', app.day_start(v_today - 1) + interval '7 hours',
+                           app.day_start(v_today - 1) + interval '11 hours', u_prod, 'Holiday pour');
+    perform app._issue_mo(v_mo, app.day_start(v_today - 1) + interval '7 hours', u_prod);
+    perform app._complete_mo(v_mo, v_oh - 4, 4, 'WET_SPOTS', app.day_start(v_today - 1) + interval '7 hours 5 minutes',
+                             app.day_start(v_today - 1) + interval '11 hours 20 minutes', u_prod);
+  end if;
+
   -- Cabin Cocoa fragrance oil: a jug went cloudy -> nearly stocked out right before the holiday rush
   select id into function_item from items where sku = 'FO-COCOA';
   v_oh := app.on_hand(function_item, 'WHS');
@@ -735,10 +751,15 @@ begin
   select id into function_item from items where sku = 'CND-COCOA';
   v_oh := app.on_hand(function_item, 'WKS');
   if v_oh > 12 then perform app._transfer(function_item, 'WKS', 'QAH', v_oh - 12, 'QA hold: wet spots found in latest pour — awaiting inspection',
-                                          app.day_start(v_today - 1) + interval '10 hours', u_prod); end if;
+                                          app.day_start(v_today - 1) + interval '12 hours', u_prod); end if;
   v_oh := app.on_hand(function_item, 'WHS');
   if v_oh > 0 then perform app._transfer(function_item, 'WHS', 'QAH', v_oh, 'QA hold: same lot pulled from warehouse',
-                                         app.day_start(v_today - 1) + interval '10 hours', u_prod); end if;
+                                         app.day_start(v_today - 1) + interval '12 hours', u_prod); end if;
+  -- fallback: if little was in back stock, pull the lot from the store shelf too (leave 12 for the POS demo)
+  if app.on_hand(function_item, 'QAH') < 24 and app.on_hand(function_item, 'STR') > 12 then
+    perform app._transfer(function_item, 'STR', 'QAH', least(app.on_hand(function_item, 'STR') - 12, 48),
+                          'QA hold: same lot pulled from the storefront shelf', app.day_start(v_today - 1) + interval '16 hours', u_prod);
+  end if;
 
   -- A box of 8 oz wicks got wet under a leaking swamp cooler: only 60 usable wicks remain,
   -- so the 8 oz wick is below ROP and tomorrow's Mallow Mal pour (144) is blocked at issue.
