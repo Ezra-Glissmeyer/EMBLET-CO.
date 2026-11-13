@@ -18,7 +18,7 @@ export default async function about(root) {
             'Realtime: Supabase Realtime (Postgres change feeds) on inventory balances, sales, orders, POs, production, returns and invoices, so every logged-in screen updates without refreshing.',
             'Hosting: GitHub Pages (static HTML + CSS + vanilla JavaScript ES modules, no build step).'])),
       sec('Libraries (CDN, pinned versions)',
-        ul(['@supabase/supabase-js 2.45.4 — database, auth and realtime client',
+        ul(['@supabase/supabase-js 2.57.4 — database, auth and realtime client',
             'Chart.js 4.4.1 — charts', 'JsBarcode 3.11.6 — Code 128 barcode labels and receipt barcodes',
             'html5-qrcode 2.3.8 — phone / laptop camera scanning (uses the native BarcodeDetector where available). USB scanners work because they type the code + Enter into any scan field.',
             'Google Fonts: Fraunces (headings) and Inter (text)'])),

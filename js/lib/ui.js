@@ -46,10 +46,14 @@ export const fmtDate = d => {
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 export const fmtDT = d => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
-export const isoDate = (d = new Date()) => {
-  const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10);
+// Business dates are Utah dates (America/Denver), matching app.today() in the database,
+// no matter what time zone the viewer's laptop or phone is set to.
+const bizFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' });
+export const isoDate = (d = new Date()) => bizFmt.format(new Date(d));
+export const addDays = (d, n) => {
+  const [y, m, day] = (typeof d === 'string' ? d.slice(0, 10) : isoDate(d)).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, day + n)).toISOString().slice(0, 10);
 };
-export const addDays = (d, n) => { const x = new Date(typeof d === 'string' ? d + 'T12:00:00' : d); x.setDate(x.getDate() + n); return isoDate(x); };
 export const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000);
 
 const STATUS = {
