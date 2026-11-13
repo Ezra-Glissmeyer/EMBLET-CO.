@@ -171,9 +171,9 @@ from (values
 ) v(sku, name, cat, fam, notes, price, lt, batch, col, acc, bc, descr);
 
 -- ---------- 4. bills of material ----------
-drop table if exists _bom;
-create temp table _bom(parent text, comp text, qty numeric);
-insert into _bom
+drop table if exists seed._bom;
+create table seed._bom(parent text, comp text, qty numeric);
+insert into seed._bom
 -- 8 oz jar candles: 0.45 lb wax, 0.6 oz FO (~8% load), wick, jar, lid, label, 0.02 oz dye
 select p, c, q from (values
  ('CND-EZRA','FO-CEDAR'),('CND-MALLOW','FO-MALLOW'),('CND-ETHAN','FO-PINE'),('CND-TIEDYE','FO-TROPIC'),
@@ -204,8 +204,8 @@ union all values ('KIT-SAMPLER','BOX-LG',1), ('KIT-SAMPLER','FILL-CRK',1.5),
  ('KIT-HOLIDAY','CND-EZRA',1), ('KIT-HOLIDAY','CND-ETHAN',1), ('KIT-HOLIDAY','CND-MALLOW',1), ('KIT-HOLIDAY','BOX-LG',1);
 
 insert into bom_lines(parent_id, component_id, qty_per)
-select p.id, c.id, b.qty from _bom b join items p on p.sku = b.parent join items c on c.sku = b.comp;
-drop table _bom;
+select p.id, c.id, b.qty from seed._bom b join items p on p.sku = b.parent join items c on c.sku = b.comp;
+drop table seed._bom;
 
 insert into supplier_items(supplier_id, item_id, supplier_sku, unit_cost, min_order_qty)
 select preferred_supplier_id, id, 'S' || preferred_supplier_id || '-' || sku, std_cost,
