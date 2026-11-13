@@ -514,12 +514,12 @@ begin
           v_late := case v_sup
              when 1 then case when random()::numeric < 0.08 then -1 else 0 end
              when 2 then case when random()::numeric < 0.42 then 1 + floor(random()::numeric * 4)::int else 0 end
-             when 3 then case when random()::numeric < 0.45 then 2 + floor(random()::numeric * 5)::int else 0 end
+             when 3 then case when random()::numeric < 0.62 then 3 + floor(random()::numeric * 5)::int else 0 end
              when 4 then case when random()::numeric < 0.25 then 1 + floor(random()::numeric * 3)::int else 0 end
              when 5 then case when random()::numeric < 0.30 then 1 + floor(random()::numeric * 4)::int else 0 end
              else        case when random()::numeric < 0.12 then 1 + floor(random()::numeric * 2)::int else 0 end end;
           v_fill := case v_sup
-             when 3 then case when random()::numeric < 0.62 then 0.62 + random()::numeric * 0.2 else 1 end
+             when 3 then case when random()::numeric < 0.78 then 0.55 + random()::numeric * 0.2 else 1 end
              when 4 then case when random()::numeric < 0.10 then 0.9 else 1 end
              when 6 then case when random()::numeric < 0.05 then 0.9 else 1 end
              else 1 end;
@@ -706,6 +706,14 @@ begin
   select id into c_ava from customers where name = 'Ava Nielsen';
   select id into c_jake from customers where name = 'Jake Christensen';
 
+  -- close out simulated orders still open, so today's open orders are exactly the scripted ones below
+  update so_lines set backordered = false
+   where so_id in (select id from sales_orders where status in ('ORDER_PLACED','PARTIALLY_FULFILLED'));
+  update sales_orders set status = case when exists (select 1 from so_lines l where l.so_id = sales_orders.id and l.qty_fulfilled > 0)
+                                        then 'CLOSED' else 'CANCELLED' end,
+         notes = concat_ws(' | ', notes, 'Closed at period end')
+   where status in ('ORDER_PLACED','PARTIALLY_FULFILLED');
+
   -- weekly replenishment run: keep at least half of each raw material at the Workshop
   for r in select i.id, app.on_hand(i.id,'WKS') wks, app.on_hand(i.id,'WHS') whs from items i where i.item_type = 'raw' loop
     if r.whs > 0 and r.wks < (r.wks + r.whs) * 0.5 then
@@ -720,6 +728,38 @@ begin
   if v_oh > 0 then perform app._adjust(function_item, 'WHS', -v_oh, 'EXPIRED_FRAGRANCE', 'Jug went cloudy — disposed', app.day_start(v_today - 2) + interval '15 hours', u_prod); end if;
   v_oh := app.on_hand(function_item, 'WKS');
   if v_oh > 7 then perform app._adjust(function_item, 'WKS', -(v_oh - 7), 'EXPIRED_FRAGRANCE', 'Jug went cloudy — disposed', app.day_start(v_today - 2) + interval '15 hours', u_prod); end if;
+
+  -- ...and the latest Cabin Cocoa pour is on QA HOLD (wet spots found during inspection).
+  -- QA Hold is not sellable and MRP ignores it, so the holiday orders need a new pour -> which needs FO-COCOA.
+  -- (Deterministic, so the MRP story is the same whatever day the seed is run.)
+  select id into function_item from items where sku = 'CND-COCOA';
+  v_oh := app.on_hand(function_item, 'WKS');
+  if v_oh > 12 then perform app._transfer(function_item, 'WKS', 'QAH', v_oh - 12, 'QA hold: wet spots found in latest pour — awaiting inspection',
+                                          app.day_start(v_today - 1) + interval '10 hours', u_prod); end if;
+  v_oh := app.on_hand(function_item, 'WHS');
+  if v_oh > 0 then perform app._transfer(function_item, 'WHS', 'QAH', v_oh, 'QA hold: same lot pulled from warehouse',
+                                         app.day_start(v_today - 1) + interval '10 hours', u_prod); end if;
+
+  -- A box of 8 oz wicks got wet under a leaking swamp cooler: only 60 usable wicks remain,
+  -- so the 8 oz wick is below ROP and tomorrow's Mallow Mal pour (144) is blocked at issue.
+  select id into function_item from items where sku = 'WCK-08';
+  v_oh := app.on_hand(function_item, 'WHS');
+  if v_oh > 0 then perform app._adjust(function_item, 'WHS', -v_oh, 'DAMAGED', 'Box got wet under the swamp cooler', app.day_start(v_today - 1) + interval '9 hours', u_prod); end if;
+  v_oh := app.on_hand(function_item, 'WKS');
+  if v_oh > 60 then perform app._adjust(function_item, 'WKS', -(v_oh - 60), 'DAMAGED', 'Box got wet under the swamp cooler', app.day_start(v_today - 1) + interval '9 hours', u_prod); end if;
+  update purchase_orders set status = 'CANCELLED'      -- no wick PO already on its way, so it really is below ROP
+   where status = 'ORDER_SENT' and not exists (select 1 from po_receipts pr where pr.po_id = purchase_orders.id)
+     and id in (select po_id from po_lines where item_id = function_item);
+
+  -- Large gift boxes: a shelf collapsed and crushed most of them right before gift-set season -> below ROP.
+  select id into function_item from items where sku = 'BOX-LG';
+  v_oh := app.on_hand(function_item, 'WHS');
+  if v_oh > 0 then perform app._adjust(function_item, 'WHS', -v_oh, 'DAMAGED', 'Shelf collapsed — boxes crushed', app.day_start(v_today - 3) + interval '14 hours', u_prod); end if;
+  v_oh := app.on_hand(function_item, 'WKS');
+  if v_oh > 4 then perform app._adjust(function_item, 'WKS', -(v_oh - 4), 'DAMAGED', 'Shelf collapsed — boxes crushed', app.day_start(v_today - 3) + interval '14 hours', u_prod); end if;
+  update purchase_orders set status = 'CANCELLED'
+   where status = 'ORDER_SENT' and not exists (select 1 from po_receipts pr where pr.po_id = purchase_orders.id)
+     and id in (select po_id from po_lines where item_id = function_item);
 
   -- open confirmed sales orders over the next 4 weeks (these drive MRP)
   -- 1) the BIG boutique holiday order

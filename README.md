@@ -73,13 +73,14 @@ Each navigation menu shows only that role's pages, and the **database** enforces
 
 ## 5. The story in the data (good demo moments)
 
-- **Cabin Cocoa fragrance oil (FO-COCOA)** is nearly out: a jug went cloudy (see its ledger: `EXPIRED_FRAGRANCE`), right before the holiday rush. MRP shows a **past-due** release date and the Planner flags it.
-- **Large Gift Box (BOX-LG)** and **8 oz wicks (WCK-08)** are below ROP. Issuing the planned Mallow Mal production order is **blocked with a list of short components**.
+- **Cabin Cocoa fragrance oil (FO-COCOA)** is nearly out: a jug went cloudy (see its ledger: `EXPIRED_FRAGRANCE`), right before the holiday rush. On top of that, the latest Cabin Cocoa pour is in **QA Hold** (wet spots), and MRP doesn't count QA Hold. The holiday orders therefore need a new pour, and MRP shows FO-COCOA with a **past-due** release date. The Planner flags it too.
+- **Large Gift Box (BOX-LG)** (a shelf collapsed) and **8 oz wicks (WCK-08)** (a box got wet) are below ROP. Issuing the planned Mallow Mal production order is **blocked with a list of short components**.
 - **Suppliers:** Bonneville Wax = Keep (always on time, complete); Sage & Ember Fragrance = Watch (often late); Great Basin Glass & Tin = **Replace** (short-ships and is late, and has past-due invoices).
 - **Main Street Mercantile** placed a big holiday order (gift sets → candles → wax and oils), which drives most of the MRP shortages; use **Pegging** to show it.
 - **Cache Valley Goods** has a partially shipped order with backordered lines.
 - **Quality:** Beehive Honey (beeswax blend) has the highest scrap rate (frosting, sinkholes) and "wick drowned" returns; Tie-Dye Ty gets "weak scent throw" returns.
-- **Liz's Lavender soap** is sold out at the storefront, so you can show the POS stock block and "check other locations".
+- **Liz's Lavender soap** has been out of production for a month, so it's nearly gone at the storefront. Ring up more bars than are on the shelf to show the POS stock block and "check other locations".
+- These story points are set up deterministically at the end of the seed, so they appear no matter what day you run it. `docs/phase1-database-test.md` is a hand-run test script for the database.
 
 ### Suggested 10-minute flow
 
