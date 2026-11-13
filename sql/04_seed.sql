@@ -205,7 +205,7 @@ union all values ('KIT-SAMPLER','BOX-LG',1), ('KIT-SAMPLER','FILL-CRK',1.5),
 
 insert into bom_lines(parent_id, component_id, qty_per)
 select p.id, c.id, b.qty from seed._bom b join items p on p.sku = b.parent join items c on c.sku = b.comp;
-drop table seed._bom;
+-- (seed._bom is kept until the next run; see note at the end of this file)
 
 insert into supplier_items(supplier_id, item_id, supplier_sku, unit_cost, min_order_qty)
 select preferred_supplier_id, id, 'S' || preferred_supplier_id || '-' || sku, std_cost,
@@ -796,7 +796,10 @@ begin
                          app.day_start(v_today + 1) + interval '15 hours', u_prod, 'Planned — issue tomorrow morning');
 end $$;
 
-drop schema seed cascade;
+-- The helper schema "seed" is kept on purpose (it is dropped and rebuilt at the top of this file).
+-- Supabase's "Run and enable RLS" button appends ALTER TABLE ... ENABLE RLS for every table created
+-- above and runs them last, so those tables must still exist when the script ends.
+revoke all on schema seed from public;
 
 -- quick sanity output
 select 'items' what, count(*)::text n from items
