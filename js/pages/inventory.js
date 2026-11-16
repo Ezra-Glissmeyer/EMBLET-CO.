@@ -135,7 +135,7 @@ export default async function inventory(root, ctx) {
   }
 
   // ---------------- ledger
-  let ledgerItem = null;
+  let ledgerItem = Number(ctx.params.get('item')) || null;
   async function ledger() {
     const sel = select([['', 'Choose item…'], ...items.map(i => [i.id, `${i.sku} · ${i.name}`])], ledgerItem || '', { onchange: e => { ledgerItem = Number(e.target.value); ledger(); } });
     const scan = scanField({ onScan: async code => { const it = await findItem(code); if (!it) return false; ledgerItem = it.id; ledger(); return true; } });

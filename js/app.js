@@ -128,12 +128,16 @@ async function refreshPills() {
 }
 
 // ---------------------------------------------------------------- router
+let routeSeq = 0;   // every navigation gets a ticket; a page that finishes loading after you've moved on is thrown away
 async function route() {
   if (!state.profile) return;
   if (!location.hash.replace(/^#\/?/, '')) history.replaceState(null, '', '#/' + HOME[state.profile.role]);   // land on this role's home page
   const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
   const r = ROUTES.find(x => x.path === path);
   if (!r || !can(r, state.profile.role)) { location.hash = '#/' + HOME[state.profile.role]; return; }
+  const ticket = ++routeSeq;
+  // close any dialog left open (e.g. clicking a link inside an item window); Escape runs each dialog's own close/cleanup
+  if (document.querySelector('.modal-bg')) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   if (state.cleanup) { try { state.cleanup(); } catch { /* ignore */ } state.cleanup = null; }
   const { nav, title, content } = state.shell;
   nav.querySelectorAll('a').forEach(a => a.classList.toggle('active', a.dataset.path === path));
@@ -142,12 +146,18 @@ async function route() {
   content.replaceChildren(h('div', { class: 'loading' }, h('span', { class: 'spinner' }), ' Loading ', r.title, '…'));
   try {
     const mod = await import(r.mod);
+    if (ticket !== routeSeq) return;
     const ctx = { profile: state.profile, role: state.profile.role, params: new URLSearchParams(qs || ''), go: p => { location.hash = '#/' + p; } };
     const node = h('div');
     const cleanup = await mod.default(node, ctx);
+    if (ticket !== routeSeq) {                       // user navigated away while this page was loading
+      if (typeof cleanup === 'function') { try { cleanup(); } catch { /* ignore */ } }
+      return;
+    }
     content.replaceChildren(node);
     state.cleanup = typeof cleanup === 'function' ? cleanup : null;
   } catch (e) {
+    if (ticket !== routeSeq) return;
     content.replaceChildren(h('div', { class: 'callout bad' }, 'This page could not load: ', e.message || String(e)));
     showError(e);
   }

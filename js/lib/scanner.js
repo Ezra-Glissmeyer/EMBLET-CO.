@@ -32,7 +32,8 @@ export function scanField({ placeholder = 'Scan or type a barcode / SKU and pres
   });
   const camBtn = h('button', { type: 'button', class: 'cam', title: 'Scan with camera', onclick: () => openCamera(handle, continuous) }, '📷 Camera');
   const wrap = h('div', { class: 'scan' }, input, camBtn);
-  if (autofocus) setTimeout(() => input.focus(), 50);
+  // auto-focus for USB scanners on laptops; not on touch screens, where it would pop up the keyboard over the page
+  if (autofocus && !window.matchMedia('(pointer: coarse)').matches) setTimeout(() => input.focus(), 50);
   wrap.focus = () => input.focus();
   return wrap;
 }
