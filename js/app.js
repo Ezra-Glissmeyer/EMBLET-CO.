@@ -128,7 +128,8 @@ async function refreshPills() {
 // ---------------------------------------------------------------- router
 async function route() {
   if (!state.profile) return;
-  const [path, qs] = (location.hash.replace(/^#\/?/, '') || HOME[state.profile.role]).split('?');
+  if (!location.hash.replace(/^#\/?/, '')) history.replaceState(null, '', '#/' + HOME[state.profile.role]);   // land on this role's home page
+  const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
   const r = ROUTES.find(x => x.path === path);
   if (!r || !can(r, state.profile.role)) { location.hash = '#/' + HOME[state.profile.role]; return; }
   if (state.cleanup) { try { state.cleanup(); } catch { /* ignore */ } state.cleanup = null; }
@@ -155,7 +156,12 @@ window.addEventListener('hashchange', route);
 // ---------------------------------------------------------------- auth bootstrap
 async function onSession(session) {
   state.session = session;
-  if (!session) { state.profile = null; stopRealtime(); loginView(); return; }
+  if (!session) {
+    if (state.cleanup) { try { state.cleanup(); } catch { /* ignore */ } state.cleanup = null; }
+    state.profile = null; stopRealtime();
+    history.replaceState(null, '', location.pathname + location.search);   // next person starts on their own home page
+    loginView(); return;
+  }
   try {
     const prof = await q(sb.from('profiles').select('*').eq('id', session.user.id).maybeSingle());
     if (!prof) throw new Error('No profile found for this login. Run the SQL setup files (03_rls.sql creates profiles on signup).');
