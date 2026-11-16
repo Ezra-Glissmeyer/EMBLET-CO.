@@ -29,20 +29,35 @@ export default async function returnsPage(root) {
         { key: 'c', label: 'Customer', fmt: r => custs.find(c => c.id === r.customer_id)?.name }, { key: 'total', label: 'Total', num: true, fmt: r => money(r.total) }],
         sales, { onRow: r => open(r.id), empty: 'No receipts for that customer.' }));
     });
-    const scan = scanField({ placeholder: 'Scan receipt barcode or type e.g. R-07012 / INV-00123', autofocus: true, onScan: async code => {
-      const s = await loadSale(code.toUpperCase());
+    const scan = scanField({ placeholder: 'Scan receipt barcode or type R-07012 / INV-00123 / SO-00265', autofocus: true, onScan: async code => {
+      const c = code.trim().toUpperCase();
+      if (c.startsWith('SO-')) {   // a sales order: its shipments are invoices (INV-…); pick the one being returned
+        const so = await q(sb.from('sales_orders').select('id, so_no, customers(name)').eq('so_no', c).maybeSingle());
+        if (!so) { toast('No sales order ' + c, 'err'); return false; }
+        const inv = await q(sb.from('sales').select('id, receipt_no, sale_at, total').eq('sales_order_id', so.id).order('id'));
+        if (!inv.length) { toast(`${so.so_no} hasn't shipped yet — nothing to return. Cancel it from Sales Orders instead.`, 'err', 6500); return false; }
+        if (inv.length === 1) { results.replaceChildren(); show(await loadSale(inv[0].id)); return true; }
+        results.replaceChildren(h('p', { class: 'muted' }, `${so.so_no} (${so.customers.name}) shipped in ${inv.length} parts — choose the invoice:`),
+          table([{ key: 'receipt_no', label: 'Invoice' }, { key: 'sale_at', label: 'Shipped', fmt: r => fmtDT(r.sale_at) }, { key: 'total', label: 'Total', num: true, fmt: r => money(r.total) }],
+            inv, { onRow: r => open(r.id) }));
+        return true;
+      }
+      const s = await loadSale(c);
       if (!s) { toast('No receipt ' + code, 'err'); return false; }
       results.replaceChildren(); show(s); return true;
     } });
     const open = async id => { show(await loadSale(id)); results.replaceChildren(); };
-    body.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'fields' }, field('Receipt / invoice #', scan), field('Find by customer', searchIn)), results), found);
+    body.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'fields' }, field('Receipt, invoice or sales order #', scan), field('Find by customer', searchIn)), results), found);
 
     function show(sale) {
       const age = daysBetween(sale.sale_at.slice(0, 10), isoDate());
       const state = sale.lines.map(l => ({ l, qty: 0, reason: 'CHANGED_MIND', disp: 'RESTOCK' }));
       const newLines = [];
       let mode = 'return';
-      const refund = select([['CARD', 'Refund to card'], ['CASH', 'Cash refund'], ...(sale.payment_method === 'ACCOUNT' ? [['ACCOUNT', 'Credit wholesale account (A/R)']] : [])], sale.payment_method === 'CASH' ? 'CASH' : sale.payment_method === 'ACCOUNT' ? 'ACCOUNT' : 'CARD');
+      const arOpen = sale.ar ? Math.round((sale.ar.amount - sale.ar.amount_paid) * 100) / 100 : 0;
+      const canCredit = sale.payment_method === 'ACCOUNT' && arOpen > 0;
+      const refund = select([['CARD', 'Refund to card'], ['CASH', 'Cash refund'], ...(canCredit ? [['ACCOUNT', `Credit wholesale account (open balance ${money(arOpen)})`]] : [])],
+                            sale.payment_method === 'CASH' ? 'CASH' : canCredit ? 'ACCOUNT' : 'CARD');
       const diffPay = select([['CARD', 'Card'], ['CASH', 'Cash']], 'CARD');
       const sumBox = h('div', { class: 'totals' });
       const newBox = h('div');
@@ -87,6 +102,10 @@ export default async function returnsPage(root) {
         const ret = state.filter(s => s.qty > 0).map(s => ({ sale_line_id: s.l.id, qty: s.qty, reason_code: s.reason, disposition: s.disp }));
         if (!ret.length) throw new Error('Enter a return quantity on at least one line.');
         if (mode === 'return') {
+          if (refund.value === 'ACCOUNT') {
+            const est = state.filter(s => s.qty > 0).reduce((t, s) => t + round2(s.l.net_amount * s.qty / s.l.qty) + round2(s.l.tax_amount * s.qty / s.l.qty), 0);
+            if (est > arOpen + 0.01) throw new Error(`Credit of ${money(est)} is more than the invoice's open balance (${money(arOpen)}). Refund the rest by card or cash.`);
+          }
           const r = await rpc('process_return', { p_sale_id: sale.id, p_lines: ret, p_refund_method: refund.value });
           toast(`Return ${r.return_no} processed · refunded ${money(r.refund_total)}`);
         } else {

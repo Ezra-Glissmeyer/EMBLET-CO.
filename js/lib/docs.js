@@ -15,7 +15,9 @@ export async function loadSale(idOrNo) {
     sale.cashier_id ? q(sb.from('profiles').select('full_name').eq('id', sale.cashier_id).maybeSingle()) : null,
     q(sb.from('returns').select('return_no, return_at, refund_total, is_exchange').eq('sale_id', sale.id)),
   ]);
-  return { ...sale, lines, customer: cust?.name, cashier: cashier?.full_name, returns: rets || [] };
+  // wholesale sales are charged to an A/R invoice; returns can credit it only while it still has an open balance
+  const ar = sale.payment_method === 'ACCOUNT' ? await q(sb.from('ar_invoices').select('invoice_no, amount, amount_paid, status').eq('sale_id', sale.id).maybeSingle()).catch(() => null) : null;
+  return { ...sale, lines, customer: cust?.name, cashier: cashier?.full_name, returns: rets || [], ar };
 }
 
 export async function receiptNode(sale) {

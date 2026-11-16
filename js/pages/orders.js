@@ -1,5 +1,5 @@
 import { sb, q, rpc, getItems, getLocations } from '../lib/db.js';
-import { h, money, qty, fmtDate, fmtDT, badge, table, tabs, modal, field, select, toast, run, isoDate, addDays, locName, loading, confirmBox } from '../lib/ui.js';
+import { h, money, qty, fmtDate, fmtDT, badge, table, tabs, modal, field, select, toast, run, isoDate, addDays, locName, loading, confirmBox, daysBetween } from '../lib/ui.js';
 import { onChange } from '../lib/realtime.js';
 import { showReceipt } from '../lib/docs.js';
 
@@ -10,10 +10,30 @@ export default async function orders(root, ctx) {
   const newBtn = h('button', { class: 'primary', onclick: () => newOrder() }, '+ New sales order');
   root.append(h('div', { class: 'row', style: { marginBottom: '8px' } }, h('div', {}, h('h1', {}, 'Sales orders'),
     h('div', { class: 'muted' }, 'Wholesale, phone and website pickup orders. Order Placed → Fulfilled → Closed (or Cancelled). Open orders feed MRP.')), h('div', { class: 'sp' }), newBtn),
-    tabs([['open', 'Open orders & pickup queue'], ['back', 'Backorders'], ['all', 'All orders']], view, k => { view = k; load(); }), body);
+    tabs([['open', 'Open orders & pickup queue'], ['back', 'Backorders'], ['all', 'All orders'], ...(['manager', 'admin'].includes(ctx.role) ? [['ar', 'Receivables (A/R)']] : [])], view, k => { view = k; load(); }), body);
 
   async function load() {
     body.replaceChildren(loading());
+    if (view === 'ar') {   // wholesale invoices charged to account (Net terms) and their payments
+      const rows = await q(sb.from('ar_invoices').select('*, customers(name)').order('due_date').limit(300));
+      const today = isoDate(), open = rows.filter(r => r.status === 'OPEN'), paid = rows.filter(r => r.status === 'PAID').reverse().slice(0, 40);
+      const owed = open.reduce((s, r) => s + (r.amount - r.amount_paid), 0), late = open.filter(r => r.due_date < today).reduce((s, r) => s + (r.amount - r.amount_paid), 0);
+      const cols = [
+        { key: 'invoice_no', label: 'Invoice', fmt: r => h('a', { href: 'javascript:void 0', onclick: () => showReceipt(r.sale_id) }, r.invoice_no) },
+        { key: 'c', label: 'Customer', fmt: r => r.customers.name }, { key: 'invoice_date', label: 'Invoiced', fmt: r => fmtDate(r.invoice_date) },
+        { key: 'due_date', label: 'Due', fmt: r => h('span', { style: { color: r.status === 'OPEN' && r.due_date < today ? 'var(--red)' : '' } }, fmtDate(r.due_date)) },
+        { key: 'st', label: '', fmt: r => r.status === 'PAID' ? badge('PAID') : r.due_date < today ? badge('BELOW_ROP', `Past due ${daysBetween(r.due_date, today)} d`) : badge('OPEN', `Due in ${daysBetween(today, r.due_date)} d`) },
+        { key: 'amount', label: 'Amount', num: true, fmt: r => money(r.amount) }, { key: 'bal', label: 'Balance', num: true, fmt: r => h('b', {}, money(r.amount - r.amount_paid)) },
+        { key: 'pay', label: '', fmt: r => r.status === 'OPEN' ? h('button', { class: 'sm primary', onclick: () => payAR(r) }, 'Record payment') : '' },
+      ];
+      body.replaceChildren(
+        h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Open wholesale invoices'), h('span', { class: 'spacer' }),
+          h('b', {}, `Owed to us ${money(owed)}`), h('span', { class: late ? 'badge red' : 'badge green' }, `Past due ${money(late)}`)),
+          h('p', { class: 'muted' }, 'Wholesale shipments are invoiced to Accounts Receivable on the customer\'s terms instead of being paid at the counter. Recording a payment calls record_customer_payment: Dr Cash, Cr Accounts Receivable.'),
+          table(cols, open, { empty: 'No open invoices — every wholesale customer is paid up.' })),
+        h('div', { class: 'card' }, h('h2', {}, 'Recently paid'), table(cols, paid, { empty: 'No payments yet.' })));
+      return;
+    }
     if (view === 'back') {
       const rows = await rpc('fn_backorders');
       body.replaceChildren(h('div', { class: 'callout', style: { marginBottom: '10px' } },
@@ -102,6 +122,23 @@ export default async function orders(root, ctx) {
       toast(`Shipped on ${res.invoice_no} · ${money(res.total)} · order is now ${res.status.replace('_', ' ').toLowerCase()}`);
       load(); showReceipt(res.sale_id); return true; } });
     modal({ title: 'Sales order ' + so.so_no, wide: true, body: bodyEl, actions });
+  }
+
+  function payAR(inv) {
+    const bal = Math.round((inv.amount - inv.amount_paid) * 100) / 100;
+    const amt = h('input', { type: 'number', step: '0.01', min: 0.01, max: bal, value: bal });
+    const date = h('input', { type: 'date', value: isoDate(), max: isoDate() });
+    modal({ title: `Record payment · ${inv.invoice_no}`, body: h('div', {},
+      h('p', {}, `${inv.customers.name} · invoice ${money(inv.amount)} · paid so far ${money(inv.amount_paid)} · balance `, h('b', {}, money(bal))),
+      h('div', { class: 'fields' }, field('Amount received', amt, 'Less than the balance = partial payment'), field('Date received', date))),
+      actions: [{ label: 'Cancel' }, { label: 'Record payment', class: 'primary', onClick: async () => {
+        const a = Number(amt.value);
+        if (!(a > 0)) throw new Error('Enter an amount greater than $0.');
+        if (a > bal + 0.001) throw new Error(`That's more than the open balance (${money(bal)}).`);
+        const res = await rpc('record_customer_payment', { p_invoice_id: inv.id, p_amount: a, p_paid_date: date.value });
+        toast(`${money(a)} received from ${inv.customers.name} · invoice is ${res.status === 'PAID' ? 'PAID' : 'still open: ' + money(res.amount - res.amount_paid) + ' left'}`);
+        load(); return true;
+      } }] });
   }
 
   function newOrder() {
