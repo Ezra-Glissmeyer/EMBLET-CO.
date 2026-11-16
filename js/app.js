@@ -90,7 +90,7 @@ function buildShell() {
       h('a', { class: 'brand', href: '#/' + HOME[p.role] }, h('img', { src: 'assets/logo-mark.svg', alt: '' }), h('div', {}, h('b', {}, 'Emblet Co.'), h('span', {}, p.role === 'customer' ? 'Candle & Soap Shop' : 'Mini ERP'))),
       nav,
       h('div', { class: 'me' }, h('b', {}, p.full_name || p.email), h('span', { class: 'role' }, p.role), h('br'),
-        h('button', { class: 'sm', onclick: async () => { await sb.auth.signOut(); } }, 'Sign out'))),
+        h('button', { class: 'sm', onclick: e => signOut(e.currentTarget) }, 'Sign out'))),
     h('div', { class: 'main' },
       h('header', { class: 'topbar' },
         h('button', { class: 'menu-btn sm', 'aria-label': 'Menu', onclick: () => shell.classList.toggle('nav-open') }, '☰'),
@@ -153,6 +153,20 @@ async function route() {
 }
 window.addEventListener('hashchange', route);
 
+// ---------------------------------------------------------------- sign out
+// Must ALWAYS work. supabase-js keeps the session if the server's /logout call fails (network blip, 5xx),
+// so: end the session locally (no network needed), wipe any stored token, and reload to the login page.
+async function signOut(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing out…'; }
+  if (state.cleanup) { try { state.cleanup(); } catch { /* ignore */ } state.cleanup = null; }
+  try { stopRealtime(); } catch { /* ignore */ }
+  try { await Promise.race([sb.auth.signOut({ scope: 'local' }), new Promise(r => setTimeout(r, 2500))]); } catch { /* ignore */ }
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('sb-') && k.includes('auth-token')) localStorage.removeItem(k);
+  } catch { /* storage blocked: nothing stored either */ }
+  location.replace(location.pathname + location.search);   // fresh page, no #/route, shows the login screen
+}
+
 // ---------------------------------------------------------------- auth bootstrap
 async function onSession(session) {
   state.session = session;
@@ -172,7 +186,7 @@ async function onSession(session) {
   } catch (e) {
     app.replaceChildren(h('div', { class: 'boot' }, h('div', { class: 'card', style: { maxWidth: '480px' } },
       h('h2', {}, 'Could not load your account'), h('p', {}, e.message || String(e)),
-      h('button', { onclick: () => sb.auth.signOut() }, 'Sign out'))));
+      h('button', { onclick: e => signOut(e.currentTarget) }, 'Sign out'))));
   }
 }
 let lastUser = undefined;
