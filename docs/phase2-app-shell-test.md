@@ -25,11 +25,16 @@ Sign out, then sign in as each role.
 
 **Typing a forbidden address:** as the cashier, change the address to `…/#/financials` and press Enter. **Expect:** you are bounced back to `#/pos`. Do the same as the customer with `#/dashboard`; **expect** to be bounced to `#/shop`.
 
-**The database enforces this too, not just the menu.** As the cashier, press F12 → Console and paste:
+**The database enforces this too, not just the menu.** This tries to set the sales tax to 0% while signed in as the cashier, going around the menus and talking straight to the database:
+1. Signed in as the **cashier** on the live site, press **F12** (Mac: Cmd+Option+J) and click the **Console** tab.
+2. If Chrome warns about pasting, type `allow pasting` and press Enter first.
+3. Paste this and press Enter:
 ```js
 const m = await import('./js/lib/db.js'); (await m.sb.from('settings').update({ sales_tax_rate: 0 }).eq('id', 1).select()).data
 ```
-**Expect:** `[]` (zero rows changed). In Table Editor → `settings`, `sales_tax_rate` is still `0.0725`.
+4. **Where to look:** the answer prints on the next line in the Console. **Expect `[]`**, an empty list, meaning *zero rows were changed*: the database refused. If you see a row instead, that would be a problem; tell me.
+5. Confirm in Supabase: **Table Editor → `settings`** (the table has one row) → the `sales_tax_rate` column still shows **0.0725**.
+6. Optional contrast: sign in as the **manager** and run the same line with `0.0725` instead of `0`. It prints `[ {…} ]` (one row), because managers *are* allowed.
 
 ### 3. Settings page (manager) — rows change
 1. Table Editor → `settings`: note `sales_tax_rate` (0.0725), `ordering_cost` (45.00) and `updated_at`.
@@ -66,7 +71,7 @@ Open **About** as any role. **Expect** these sections:
 - Key formulas
 
 ### 7. Sign out
-Click **Sign out**. **Expect:** you return to the login page, and the address no longer has a `#/…` page in it. Sign in as a different role and you land on *that* role's home page.
+Click **Sign out** (top-right of every page, and at the bottom of the sidebar). **Expect:** you return to the login page, and the address no longer has a `#/…` page in it. Sign in as a different role and you land on *that* role's home page.
 
 ---
 **Pass:** every Expect above matches, especially the three database changes (the `settings` row in 3, `profiles.role` in 5) and the zero-rows result in section 2.
