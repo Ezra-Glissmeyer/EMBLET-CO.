@@ -94,7 +94,9 @@ function buildShell() {
     h('div', { class: 'main' },
       h('header', { class: 'topbar' },
         h('button', { class: 'menu-btn sm', 'aria-label': 'Menu', onclick: () => shell.classList.toggle('nav-open') }, '☰'),
-        title, h('div', { class: 'spacer' }), live),
+        title, h('div', { class: 'spacer' }), live,
+        h('span', { class: 'who' }, (p.full_name || p.email).split(' ')[0], ' · ', p.role),
+        h('button', { class: 'sm', title: 'Sign out', onclick: e => signOut(e.currentTarget) }, 'Sign out')),
       content));
   nav.addEventListener('click', () => shell.classList.remove('nav-open'));
   app.className = '';
