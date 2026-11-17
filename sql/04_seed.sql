@@ -839,16 +839,21 @@ begin
 
   -- two production orders in progress right now + one planned for tomorrow
   v_ts := least(now() - interval '45 minutes', app.day_start(v_today) + interval '7 hours');
-  -- pick two products whose components are on hand (workshop + warehouse), stage them, then issue (materials -> WIP)
-  for r in select i.id, i.sku, i.batch_size q from items i
-            where i.sku in ('SOAP-OAT','MINI-ETHAN','SOAP-BROOKE','MINI-EZRA','SOAP-WASATCH','CND-ETHAN','CND-EZRA','MINI-MALLOW')
-              and not exists (select 1 from bom_lines b where b.parent_id = i.id
-                               and app.on_hand(b.component_id,'WKS') + app.on_hand(b.component_id,'WHS') < b.qty_per * i.batch_size)
-            order by array_position(array['SOAP-OAT','MINI-ETHAN','SOAP-BROOKE','MINI-EZRA','SOAP-WASATCH','CND-ETHAN','CND-EZRA','MINI-MALLOW'], i.sku)
+  -- Start two soap / mini-tin / gift-set runs at whatever size the materials allow (12-unit multiples, up to one batch).
+  -- Sized from what is actually on hand, so this never depends on what the simulation happened to leave.
+  -- (8 oz candles are left alone: the wet-wick story needs the Mallow Mal pour to be blocked.)
+  for r in select x.id, x.sku, x.q from (
+              select i.id, i.sku, i.category,
+                     least(i.batch_size, floor(min((app.on_hand(b.component_id,'WKS') + app.on_hand(b.component_id,'WHS')) / b.qty_per) / 12) * 12) q
+                from items i join bom_lines b on b.parent_id = i.id
+               where i.category in ('soap','mini_tin','gift_set') and i.active
+               group by i.id) x
+            where x.q >= 12
+            order by (x.q >= 24) desc, array_position(array['soap','mini_tin','gift_set'], x.category), x.q desc, x.sku
             limit 2 loop
-    perform app._transfer(b.component_id, 'WHS', 'WKS', b.qty_per * r.q - app.on_hand(b.component_id, 'WKS'),
+    perform app._transfer(b.component_id, 'WHS', 'WKS', least(app.on_hand(b.component_id, 'WHS'), b.qty_per * r.q - app.on_hand(b.component_id, 'WKS')),
                           'Stage for production', v_ts - interval '20 minutes', u_prod)
-       from bom_lines b where b.parent_id = r.id and app.on_hand(b.component_id, 'WKS') < b.qty_per * r.q;
+       from bom_lines b where b.parent_id = r.id and app.on_hand(b.component_id, 'WKS') < b.qty_per * r.q and app.on_hand(b.component_id, 'WHS') > 0;
     v_mo := app._create_mo(r.id, r.q, 'WKS', v_ts, v_ts + make_interval(secs => (r.q / 24.0 * 3600)::float8), u_prod, 'Holiday build');
     perform app._issue_mo(v_mo, v_ts + interval '10 minutes', u_prod);
     v_ts := v_ts + interval '30 minutes';

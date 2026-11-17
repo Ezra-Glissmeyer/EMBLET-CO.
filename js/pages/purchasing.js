@@ -14,11 +14,21 @@ export default async function purchasing(root, ctx) {
     tabs([['pos', 'Purchase orders'], ['receive', 'Scan to receive'], ...(isMgr ? [['ap', 'A/P invoices & payments']] : [])], view, k => { view = k; render(); }), body);
   const render = () => ({ pos: listPOs, receive: () => receive(), ap: listAP })[view]().catch(e => body.replaceChildren(h('div', { class: 'callout bad' }, e.message)));
 
+  let poStatus = 'open', poSup = '';
   async function listPOs() {
     body.replaceChildren(loading());
-    const rows = await q(sb.from('purchase_orders').select('*, suppliers(name), po_lines(qty_ordered, qty_received, unit_cost), po_receipts(received_date, days_late)').order('id', { ascending: false }).limit(150));
+    let qb = sb.from('purchase_orders').select('*, suppliers(name), po_lines(qty_ordered, qty_received, unit_cost), po_receipts(received_date, days_late)').order('id', { ascending: false }).limit(300);
+    if (poStatus === 'open') qb = qb.in('status', ['ORDER_SENT', 'PARTIALLY_RECEIVED']);
+    else if (poStatus) qb = qb.eq('status', poStatus);
+    if (poSup) qb = qb.eq('supplier_id', Number(poSup));
+    const rows = await q(qb);
     const today = isoDate();
-    body.replaceChildren(table([
+    const bar = h('div', { class: 'row', style: { marginBottom: '10px' } },
+      select([['open', 'Open (Order Sent / Partially Received)'], ['', 'All statuses'], ['ORDER_SENT', 'Order Sent'], ['PARTIALLY_RECEIVED', 'Partially Received'], ['RECEIVED', 'Received'], ['CLOSED', 'Closed'], ['CANCELLED', 'Cancelled']],
+             poStatus, { onchange: e => { poStatus = e.target.value; listPOs(); } }),
+      select([['', 'All suppliers'], ...suppliers.map(x => [x.id, x.name])], poSup, { onchange: e => { poSup = e.target.value; listPOs(); } }),
+      h('span', { class: 'muted' }, `${rows.length} PO(s) · ${rows.filter(r => ['ORDER_SENT', 'PARTIALLY_RECEIVED'].includes(r.status) && r.expected_date < today).length} past expected date`));
+    body.replaceChildren(bar, table([
       { key: 'po_no', label: 'PO', fmt: r => h('b', {}, r.po_no) }, { key: 'sup', label: 'Supplier', fmt: r => r.suppliers.name },
       { key: 'order_date', label: 'Ordered', fmt: r => fmtDate(r.order_date) },
       { key: 'expected_date', label: 'Expected', fmt: r => h('span', { style: { color: ['ORDER_SENT', 'PARTIALLY_RECEIVED'].includes(r.status) && r.expected_date < today ? 'var(--red)' : '' } }, fmtDate(r.expected_date)) },
@@ -27,7 +37,7 @@ export default async function purchasing(root, ctx) {
       { key: 'fill', label: 'Fill', num: true, fmt: r => { const o = r.po_lines.reduce((s, l) => s + Number(l.qty_ordered), 0), g = r.po_lines.reduce((s, l) => s + Number(l.qty_received), 0); return r.po_receipts.length ? Math.round(g / o * 100) + '%' : ''; } },
       { key: 'v', label: 'Value', num: true, fmt: r => money(r.po_lines.reduce((s, l) => s + l.qty_ordered * l.unit_cost, 0)) },
       { key: 'status', label: 'Status', fmt: r => badge(r.status) },
-    ], rows, { onRow: r => openPO(r.id), scroll: true }));
+    ], rows, { onRow: r => openPO(r.id), scroll: true, empty: poStatus === 'open' ? 'No open purchase orders.' : 'No purchase orders match.' }));
   }
 
   async function openPO(id) {
@@ -80,7 +90,7 @@ export default async function purchasing(root, ctx) {
       if (!ls.length) throw new Error('Enter or scan at least one received quantity.');
       const r = await rpc('receive_purchase_order', { p_po_id: Number(poSel.value), p_location: locSel.value, p_lines: ls, p_received_date: date.value });
       toast(`${r.receipt_no} posted — ${r.days_late > 0 ? r.days_late + ' days LATE' : r.days_late < 0 ? -r.days_late + ' days early' : 'on time'}. PO is ${r.po_status.replace('_', ' ').toLowerCase()}; invoice ${r.invoice_no} created.`, 'ok', 7000);
-      await receive(); }) }, 'Post receipt');
+      await receive(r.po_status === 'PARTIALLY_RECEIVED' ? Number(poSel.value) : undefined); }) }, 'Post receipt');   // stay on a part-received PO
     body.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'fields' }, field('Purchase order', poSel), field('Receive into', locSel), field('Receipt date', date)),
       field('Scan to receive', scan), linesBox, h('div', { class: 'row end', style: { marginTop: '12px' } }, post)));
     await loadPO();
@@ -97,14 +107,44 @@ export default async function purchasing(root, ctx) {
       { key: 'due_date', label: 'Due', fmt: r => h('span', { style: { color: r.status === 'OPEN' && r.due_date < today ? 'var(--red)' : '' } }, fmtDate(r.due_date)) },
       { key: 'flag', label: '', fmt: r => r.status === 'PAID' ? badge('PAID') : r.due_date < today ? badge('BELOW_ROP', `Past due ${daysBetween(r.due_date, today)} d`) : r.discount_date && r.discount_date >= today ? badge('OK', `2% off until ${fmtDate(r.discount_date)}`) : badge('OPEN', `Due in ${daysBetween(today, r.due_date)} d`) },
       { key: 'amount', label: 'Amount', num: true, fmt: r => money(r.amount) }, { key: 'bal', label: 'Balance', num: true, fmt: r => money(r.amount - r.amount_paid) },
-      { key: 'p', label: '', fmt: r => r.status === 'OPEN' ? h('button', { class: 'sm primary', onclick: e => run(e.target, async () => {
-        const res = await rpc('record_supplier_payment', { p_invoice_id: r.id, p_take_discount: true });
-        toast(`Paid ${r.invoice_no}${res.amount_paid > r.amount - 0.001 && r.discount_pct > 0 && today <= r.discount_date ? ' with 2% early-payment discount' : ''}`); listAP(); }) }, 'Pay') : '' },
+      { key: 'p', label: '', fmt: r => r.status === 'OPEN' ? h('button', { class: 'sm primary', onclick: () => payAP(r) }, 'Pay…') : '' },
     ];
     const owed = openRows.reduce((s, r) => s + (r.amount - r.amount_paid), 0), past = openRows.filter(r => r.due_date < today).reduce((s, r) => s + (r.amount - r.amount_paid), 0);
     body.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Open invoices'), h('span', { class: 'spacer' }), h('b', {}, `Owed ${money(owed)}`), h('span', { class: past ? 'badge red' : 'badge green' }, `Past due ${money(past)}`)),
       table(cols, openRows, { empty: 'All supplier invoices are paid.' })),
       h('div', { class: 'card' }, h('h2', {}, 'Recently paid'), table(cols, paid)));
+  }
+
+  // Record a supplier payment (full or partial; 2/10 Net 30 invoices can take 2% off if paid in full by the discount date)
+  function payAP(inv) {
+    const today = isoDate();
+    const open = Math.round((inv.amount - inv.amount_paid) * 100) / 100;
+    const canDisc = inv.discount_pct > 0 && inv.amount_paid === 0 && inv.discount_date && today <= inv.discount_date;
+    const disc = canDisc ? Math.round(inv.amount * inv.discount_pct) / 100 : 0;
+    const take = h('input', { type: 'checkbox', checked: canDisc, disabled: !canDisc });
+    const amt = h('input', { type: 'number', step: '0.01', min: 0.01, value: canDisc ? (open - disc).toFixed(2) : open.toFixed(2) });
+    const date = h('input', { type: 'date', value: today, max: today });
+    const note = h('div', { class: 'hint' });
+    const sync = () => {
+      amt.disabled = take.checked;
+      if (take.checked) amt.value = (open - disc).toFixed(2);
+      note.textContent = take.checked ? `Paying ${money(open - disc)} settles the full ${money(open)}: ${money(disc)} is booked to 7000 Purchase Discounts Earned.` : 'Less than the balance = a partial payment; the invoice stays open.';
+    };
+    take.addEventListener('change', sync); sync();
+    modal({ title: `Pay ${inv.invoice_no} · ${inv.suppliers.name}`, body: h('div', {},
+      h('p', {}, `Terms ${inv.suppliers.payment_terms} · invoiced ${fmtDate(inv.invoice_date)} · due ${fmtDate(inv.due_date)} · open balance `, h('b', {}, money(open))),
+      canDisc ? h('div', { class: 'callout' }, `2/10 Net 30: pay in full by ${fmtDate(inv.discount_date)} and save ${money(disc)}.`)
+        : inv.discount_pct > 0 ? h('div', { class: 'callout warn' }, `The 2% early-payment window closed on ${fmtDate(inv.discount_date)}.`) : null,
+      h('div', { class: 'fields' }, field('Amount', amt), field('Payment date', date)), h('label', { class: 'row' }, take, 'Take the early-payment discount'), note),
+      actions: [{ label: 'Cancel' }, { label: 'Record payment', class: 'primary', onClick: async () => {
+        const a = Number(amt.value);
+        if (!take.checked && !(a > 0)) throw new Error('Enter an amount greater than $0.');
+        if (!take.checked && a > open + 0.001) throw new Error(`That's more than the open balance (${money(open)}).`);
+        if (date.value > today) throw new Error('Payment date cannot be in the future.');
+        const res = await rpc('record_supplier_payment', { p_invoice_id: inv.id, p_amount: take.checked ? null : a, p_paid_date: date.value, p_take_discount: take.checked });
+        toast(res.status === 'PAID' ? `${inv.invoice_no} paid in full${take.checked ? ` (saved ${money(disc)})` : ''}` : `${money(a)} paid · ${money(res.amount - res.amount_paid)} still open`);
+        listAP(); return true;
+      } }] });
   }
 
   function newPO(prefill) {

@@ -1,5 +1,5 @@
-import { sb, q, getItems } from '../lib/db.js';
-import { h, money, qty, pct, num, fmtDate, badge, table, tabs, modal, field, select, toast, chart, palette, loading, confirmBox } from '../lib/ui.js';
+import { sb, q, getItems, invalidateItems } from '../lib/db.js';
+import { h, money, qty, pct, num, fmtDate, badge, table, tabs, modal, field, select, toast, chart, palette, loading, confirmBox, run } from '../lib/ui.js';
 import { onChange } from '../lib/realtime.js';
 
 export default async function suppliersPage(root) {
@@ -61,15 +61,25 @@ export default async function suppliersPage(root) {
     const siBox = h('div');
     const drawSI = () => siBox.replaceChildren(id ? h('div', {}, h('h3', {}, 'Items supplied & cost'),
       table([{ key: 'i', label: 'Item', fmt: r => `${r.items.sku} · ${r.items.name}` },
-        { key: 'unit_cost', label: 'Unit cost', num: true, fmt: r => h('input', { type: 'number', step: '0.0001', class: 'inline-in', value: r.unit_cost, onchange: async e => { await q(sb.from('supplier_items').update({ unit_cost: Number(e.target.value) }).eq('supplier_id', id).eq('item_id', r.item_id)); toast('Cost updated'); } }) },
+        { key: 'unit_cost', label: 'Unit cost', num: true, fmt: r => h('input', { type: 'number', step: '0.0001', class: 'inline-in', value: r.unit_cost, onchange: e => run(null, async () => {
+          const v = Number(e.target.value);
+          if (e.target.value === '' || !(v >= 0)) { e.target.value = r.unit_cost; throw new Error('Cost must be $0 or more.'); }
+          const rows = await q(sb.from('supplier_items').update({ unit_cost: v }).eq('supplier_id', id).eq('item_id', r.item_id).select());
+          if (!rows.length) throw new Error('Not saved: only managers can change supplier costs.');
+          r.unit_cost = v; toast(`${r.items.sku}: new POs to this supplier will default to ${money(v)}`);
+        }) }) },
         { key: 'm', label: 'Min order', num: true, fmt: r => qty(r.min_order_qty, r.items.uom) },
-        { key: 'x', label: '', fmt: r => h('button', { class: 'sm ghost', onclick: async () => { await q(sb.from('supplier_items').delete().eq('supplier_id', id).eq('item_id', r.item_id)); si = si.filter(x => x.item_id !== r.item_id); drawSI(); } }, '✕') }], si, { empty: 'No items linked yet.' }),
+        { key: 'x', label: '', fmt: r => h('button', { class: 'sm ghost', onclick: () => run(null, async () => {
+          const rows = await q(sb.from('supplier_items').delete().eq('supplier_id', id).eq('item_id', r.item_id).select());
+          if (!rows.length) throw new Error('Not removed: only managers can change supplier items.');
+          si = si.filter(x => x.item_id !== r.item_id); drawSI(); }) }, '✕') }], si, { empty: 'No items linked yet.' }),
       (() => { const sel = select([['', 'Add an item…'], ...items.filter(i => ['raw', 'resale'].includes(i.item_type) && !si.some(x => x.item_id === i.id)).map(i => [i.id, `${i.sku} · ${i.name}`])], '');
         const c = h('input', { type: 'number', step: '0.0001', class: 'inline-in', placeholder: 'cost' });
-        return h('div', { class: 'row', style: { marginTop: '8px' } }, sel, c, h('button', { class: 'sm', onclick: async () => {
-          if (!sel.value || !(Number(c.value) >= 0) || c.value === '') return toast('Choose an item and cost', 'err');
+        return h('div', { class: 'row', style: { marginTop: '8px' } }, sel, c, h('button', { class: 'sm', onclick: e => run(e.currentTarget, async () => {
+          if (!sel.value || c.value === '' || !(Number(c.value) >= 0)) throw new Error('Choose an item and enter its cost.');
           const [row] = await q(sb.from('supplier_items').insert({ supplier_id: id, item_id: Number(sel.value), unit_cost: Number(c.value) }).select('*, items(sku, name, uom)'));
-          si.push(row); drawSI(); } }, 'Add')); })()) : h('p', { class: 'hint' }, 'Save the supplier first, then link the items they supply.'));
+          if (!row) throw new Error('Not saved: only managers can change supplier items.');
+          si.push(row); drawSI(); }) }, 'Add')); })()) : h('p', { class: 'hint' }, 'Save the supplier first, then link the items they supply.'));
     drawSI();
     modal({ title: id ? 'Edit supplier' : 'New supplier', wide: true, body: h('div', {},
       h('div', { class: 'fields' }, field('Name', inp('name')), field('Contact name', inp('contact_name')), field('Email', inp('email', 'email')), field('Phone', inp('phone'))),
@@ -77,13 +87,30 @@ export default async function suppliersPage(root) {
       field('Notes', inp('notes')), siBox),
       actions: [...(id ? [{ label: 'Delete', class: 'danger', onClick: async () => {
         if (!await confirmBox('Delete supplier?', 'Suppliers with PO history cannot be deleted — mark them inactive instead.', 'Delete', true)) return false;
-        await q(sb.from('suppliers').delete().eq('id', id)); toast('Deleted'); render(); return true; } }] : []),
+        try {
+          const rows = await q(sb.from('suppliers').delete().eq('id', id).select());
+          if (!rows.length) throw new Error('Not deleted: only managers can delete suppliers.');
+        } catch (e) {
+          if (/foreign key|violates/i.test(e.message)) throw new Error(`${s.name} has purchase orders or items on file, so it can't be deleted (that would erase its history and scorecard). Untick "Active" instead.`);
+          throw e;
+        }
+        toast('Deleted'); render(); return true; } }] : []),
         { label: 'Cancel' }, { label: 'Save', class: 'primary', onClick: async () => {
           const rec = { name: f.name.value.trim(), contact_name: f.contact_name.value, email: f.email.value, phone: f.phone.value, address: f.address.value,
             quoted_lead_days: Number(f.quoted_lead_days.value), payment_terms: terms.value, notes: f.notes.value, active: active.checked };
           if (!rec.name) throw new Error('Supplier name is required.');
           if (!(rec.quoted_lead_days >= 0)) throw new Error('Lead time must be zero or more days.');
-          if (id) await q(sb.from('suppliers').update(rec).eq('id', id)); else await q(sb.from('suppliers').insert(rec));
+          if (rec.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(rec.email)) throw new Error('That email address doesn\'t look right.');
+          const rows = id ? await q(sb.from('suppliers').update(rec).eq('id', id).select()) : await q(sb.from('suppliers').insert(rec).select());
+          if (!rows.length) throw new Error('Not saved: only managers can edit suppliers.');
+          // keep item lead times in step with the supplier's quoted lead time (ROP and expected dates use them)
+          if (id && rec.quoted_lead_days !== s.quoted_lead_days) {
+            const its = await q(sb.from('items').select('id, sku').eq('preferred_supplier_id', id));
+            if (its.length && await confirmBox('Update item lead times?', `Change the lead time on ${its.length} item(s) that ${rec.name} supplies from ${s.quoted_lead_days} to ${rec.quoted_lead_days} days? Their reorder points will recalculate.`, 'Update items')) {
+              await q(sb.from('items').update({ lead_time_days: rec.quoted_lead_days }).eq('preferred_supplier_id', id).select('id'));
+              invalidateItems(); toast(`${its.length} item lead time(s) updated to ${rec.quoted_lead_days} days`, 'info');
+            }
+          }
           toast('Supplier saved'); render(); return true; } }] });
   }
   render();

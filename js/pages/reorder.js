@@ -25,8 +25,15 @@ export default async function reorder(root, ctx) {
       h('div', { class: 'fields' }, field('Ordering / setup cost per order ($)', f.ordering_cost), field('Holding cost (% of unit cost / yr)', f.holding_cost_pct),
         field('Service level z', f.service_z), field('Review period (days)', f.review_period_days), field('Usage history window (days)', f.usage_window_days)),
       isMgr ? h('button', { class: 'primary', onclick: e => run(e.target, async () => {
-        await q(sb.from('settings').update({ ordering_cost: Number(f.ordering_cost.value), holding_cost_pct: Number(f.holding_cost_pct.value) / 100, service_z: Number(f.service_z.value),
-          review_period_days: Number(f.review_period_days.value), usage_window_days: Number(f.usage_window_days.value), updated_at: new Date().toISOString() }).eq('id', 1));
+        const patch = { ordering_cost: Number(f.ordering_cost.value), holding_cost_pct: Number(f.holding_cost_pct.value) / 100, service_z: Number(f.service_z.value),
+          review_period_days: Number(f.review_period_days.value), usage_window_days: Number(f.usage_window_days.value), updated_at: new Date().toISOString() };
+        if (!(patch.ordering_cost >= 0) || f.ordering_cost.value === '') throw new Error('Ordering cost must be $0 or more.');
+        if (!(patch.holding_cost_pct > 0 && patch.holding_cost_pct <= 2)) throw new Error('Holding cost must be more than 0% (and at most 200%) per year.');
+        if (!(patch.service_z >= 0 && patch.service_z <= 4)) throw new Error('The z-value must be between 0 and 4.');
+        if (!(patch.review_period_days >= 1 && patch.review_period_days <= 90)) throw new Error('Review period must be 1–90 days.');
+        if (!(patch.usage_window_days >= 14 && patch.usage_window_days <= 400)) throw new Error('Usage window must be 14–400 days.');
+        const saved = await q(sb.from('settings').update(patch).eq('id', 1).select('id'));
+        if (!saved.length) throw new Error('Not saved: only managers can change ordering rules.');
         invalidateSettings(); toast('Settings saved — ROP and EOQ recalculated'); await drawTable(); }) }, 'Save & recalculate') : h('p', { class: 'hint' }, 'Managers can change these values.'));
   }
 
