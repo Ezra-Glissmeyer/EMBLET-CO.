@@ -10,6 +10,11 @@ export async function loadSale(idOrNo) {
   const sale = await q(typeof idOrNo === 'number' ? qb.eq('id', idOrNo).maybeSingle() : qb.ilike('receipt_no', String(idOrNo).trim()).maybeSingle());
   if (!sale) return null;
   const lines = await q(sb.from('sale_lines').select(LINE_COLS + ', items(sku, name, barcode, category)').eq('sale_id', sale.id).order('line_no'));
+  // customers can't read the items table (it holds costs) — take names from the customer-safe catalogue view instead
+  if (lines.some(l => !l.items)) {
+    const cat = await q(sb.from('v_catalog').select('id, sku, name, category').in('id', lines.map(l => l.item_id)));
+    for (const l of lines) l.items = l.items || cat.find(c => c.id === l.item_id) || { sku: '', name: 'Item #' + l.item_id };
+  }
   const [cust, cashier, rets] = await Promise.all([
     sale.customer_id ? q(sb.from('customers').select('name').eq('id', sale.customer_id).maybeSingle()) : null,
     sale.cashier_id ? q(sb.from('profiles').select('full_name').eq('id', sale.cashier_id).maybeSingle()) : null,
