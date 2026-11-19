@@ -1,5 +1,5 @@
-import { sb, q, rpc, getItems, getReasons } from '../lib/db.js';
-import { h, money, qty, pct, num, fmtDT, fmtDate, badge, table, tabs, modal, field, select, toast, run, kpi, chart, isoDate, addDays, loading, palette, locName } from '../lib/ui.js';
+import { sb, q, rpc, getItems, getReasons, friendly } from '../lib/db.js';
+import { h, money, qty, pct, num, fmtDT, fmtDate, badge, table, tabs, modal, field, select, toast, run, kpi, chart, isoDate, addDays, loading, palette, locName, showError } from '../lib/ui.js';
 import { onChange } from '../lib/realtime.js';
 
 const localDT = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
@@ -29,10 +29,63 @@ export default async function production(root, ctx) {
         { key: 'lot_no', label: 'Lot' }] : [{ key: 'cc', label: 'Issued cost', num: true, fmt: r => r.status === 'IN_PROGRESS' ? money(r.component_cost) : '' }]),
       { key: 'status', label: 'Status', fmt: r => badge(r.status) },
       { key: 'a', label: '', fmt: r => r.status === 'PLANNED' ? h('div', { class: 'row' },
-          h('button', { class: 'sm primary', onclick: e => run(e.target, async () => { const res = await rpc('issue_production_order', { p_mo_id: r.id }); toast(`${res.mo_no} issued — ${money(res.component_cost)} of materials to WIP (lot ${res.lot_no})`); render(); }) }, 'Issue materials'),
+          h('button', { class: 'sm', onclick: () => materials(r) }, 'Materials'),
+          h('button', { class: 'sm primary', onclick: e => issue(r, e.currentTarget) }, 'Issue materials'),
           h('button', { class: 'sm ghost', onclick: e => run(e.target, async () => { await rpc('cancel_production_order', { p_mo_id: r.id }); toast('Cancelled'); render(); }) }, 'Cancel'))
         : r.status === 'IN_PROGRESS' ? h('button', { class: 'sm primary', onclick: () => complete(r) }, 'Complete…') : '' },
     ], rows, { empty: statuses.includes('PLANNED') ? 'No open production orders. Use MRP or Reorder Review to plan some.' : 'No completed orders yet.', scroll: true }));
+  }
+
+  // Issue: on a shortage, open the Materials window instead of a dead-end error
+  async function issue(r, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Issuing…'; }
+    try {
+      const res = await rpc('issue_production_order', { p_mo_id: r.id });
+      toast(`${res.mo_no} issued — ${money(res.component_cost)} of materials moved to Work in Process (lot ${res.lot_no})`);
+      render(); return true;
+    } catch (e) {
+      const err = friendly(e);
+      if (err.kind === 'short') { materials(r, true); return false; }
+      showError(e); return false;
+    } finally { if (btn) { btn.disabled = false; btn.textContent = 'Issue materials'; } }
+  }
+
+  // What the order needs vs what is at the production location and in the warehouse; move components over in one click
+  async function materials(r, blocked = false) {
+    const lines = (await q(sb.from('bom_lines').select('component_id, qty_per').eq('parent_id', r.item_id)))
+      .map(l => ({ ...l, items: items.find(i => i.id === l.component_id) || { sku: '?', name: 'unknown item', uom: '' } }));
+    const bal = await q(sb.from('inventory_balances').select('item_id, location_code, qty').in('item_id', lines.map(l => l.component_id)));
+    const at = (id, loc) => Number(bal.find(b => b.item_id === id && b.location_code === loc)?.qty || 0);
+    const other = r.location_code === 'WKS' ? 'WHS' : 'WKS';
+    const rows = lines.map(l => {
+      const need = Math.round(r.qty_planned * l.qty_per * 10000) / 10000, here = at(l.component_id, r.location_code), there = at(l.component_id, other);
+      return { ...l, need, here, there, short: Math.max(0, need - here), movable: Math.min(Math.max(0, need - here), there) };
+    });
+    const shortRows = rows.filter(x => x.short > 0), fixable = shortRows.filter(x => x.movable > 0);
+    const canMake = Math.floor(Math.min(...rows.map(x => (x.here + x.there) / Number(x.qty_per))));
+    const moveAll = async () => {
+      for (const x of fixable) await rpc('transfer_inventory', { p_item_id: x.component_id, p_from: other, p_to: r.location_code, p_qty: x.movable, p_note: `Stage for ${r.mo_no}` });
+      toast(`Moved ${fixable.length} component(s) from ${locName(other)} to ${locName(r.location_code)}`);
+    };
+    const m = modal({ title: `${r.mo_no} · materials for ${qty(r.qty_planned)} × ${r.items.name}`, wide: true, body: h('div', {},
+      blocked ? h('div', { class: 'callout bad', style: { marginBottom: '10px' } }, 'Not enough components at ' + locName(r.location_code) + ' to issue this order. Nothing was consumed.') : null,
+      table([
+        { key: 'c', label: 'Component', fmt: x => `${x.items.sku} · ${x.items.name}` },
+        { key: 'per', label: 'Per unit', num: true, fmt: x => qty(x.qty_per, x.items.uom) },
+        { key: 'need', label: 'Needed', num: true, fmt: x => h('b', {}, qty(x.need, x.items.uom)) },
+        { key: 'here', label: 'At ' + r.location_code, num: true, fmt: x => qty(x.here) },
+        { key: 'there', label: 'At ' + other, num: true, fmt: x => qty(x.there) },
+        { key: 'short', label: 'Short', num: true, fmt: x => x.short > 0 ? h('b', { style: { color: 'var(--red)' } }, qty(x.short, x.items.uom)) : h('span', { style: { color: 'var(--green)' } }, '✓') },
+        { key: 'fix', label: '', fmt: x => x.short <= 0 ? '' : x.movable >= x.short ? badge('OK', `move ${qty(x.movable)} from ${other}`)
+            : x.movable > 0 ? badge('REVIEW', `only ${qty(x.movable)} in ${other} — buy the rest`) : badge('BELOW_ROP', 'not in stock — buy') },
+      ], rows, { rowClass: x => x.short > 0 ? (x.movable >= x.short ? 'warn' : 'low') : '' }),
+      h('p', { class: 'hint' }, shortRows.length === 0 ? 'Everything needed is at ' + locName(r.location_code) + ' — ready to issue.'
+        : `With every location's stock this order could make at most ${num(canMake)} unit(s). ` + (shortRows.length > fixable.length || fixable.some(x => x.movable < x.short) ? 'Some components must be purchased first (Reorder Review or MRP).' : ''))),
+      actions: [{ label: 'Close' },
+        ...(fixable.length ? [{ label: `Move ${fixable.length} from ${locName(other).split(' – ')[0]}`, onClick: async () => { await moveAll(); m.close(); materials(r); return false; } }] : []),
+        ...(shortRows.length === 0 || fixable.length && fixable.length === shortRows.length && fixable.every(x => x.movable >= x.short)
+          ? [{ label: shortRows.length ? 'Move & issue' : 'Issue now', class: 'primary', onClick: async () => { if (shortRows.length) await moveAll(); m.close(); await issue(r); return false; } }] : []),
+      ] });
   }
 
   function complete(r) {
@@ -40,7 +93,11 @@ export default async function production(root, ctx) {
     const scrap = h('input', { type: 'number', min: 0, value: 0 });
     const reason = select([['', '— no scrap —'], ...scrapReasons.map(s => [s.code, `${s.code} — ${s.description}`])], '');
     const st = h('input', { type: 'datetime-local', value: localDT(r.actual_start || r.planned_start) });
-    const fn = h('input', { type: 'datetime-local', value: localDT(new Date()) });
+    // Default finish = now; but if the run was issued moments ago (e.g. during a demo), use start + the planned run time,
+    // so finish is always after start (times are entered to the minute) and the cycle-time metrics stay realistic.
+    const startMs = new Date(r.actual_start || r.planned_start).getTime();
+    const plannedMs = Math.max(3600e3, new Date(r.planned_finish) - new Date(r.planned_start));
+    const fn = h('input', { type: 'datetime-local', value: localDT(Date.now() - startMs >= 30 * 60e3 ? Date.now() : startMs + plannedMs) });
     const preview = h('div', { class: 'callout' });
     const upd = () => {
       const g = Number(good.value) || 0, s = Number(scrap.value) || 0;
@@ -54,6 +111,9 @@ export default async function production(root, ctx) {
       h('div', { class: 'fields' }, field('Qty started', h('input', { value: qty(r.qty_started), disabled: true })), field('Completed good', good), field('Scrapped / rework', scrap)),
       field('Scrap reason code', reason), h('div', { class: 'fields' }, field('Actual start', st), field('Actual finish', fn)), preview),
       actions: [{ label: 'Cancel' }, { label: 'Complete & receive to stock', class: 'primary', onClick: async () => {
+        if (Number(good.value) + Number(scrap.value) !== Number(r.qty_started)) throw new Error(`Good (${good.value}) + scrapped (${scrap.value}) must equal the quantity started (${qty(r.qty_started)}).`);
+        if (Number(scrap.value) > 0 && !reason.value) throw new Error('Choose a scrap reason code for the scrapped units.');
+        if (!st.value || !fn.value || new Date(fn.value) <= new Date(st.value)) throw new Error('Actual finish must be after actual start.');
         const res = await rpc('complete_production_order', { p_mo_id: r.id, p_qty_good: Number(good.value), p_qty_scrap: Number(scrap.value),
           p_scrap_reason: reason.value || null, p_actual_start: new Date(st.value).toISOString(), p_actual_finish: new Date(fn.value).toISOString() });
         toast(`${res.mo_no} complete: ${qty(res.qty_good)} good at ${money(res.actual_unit_cost)} (std ${money(res.std_unit_cost)})`); render(); return true; } }] });

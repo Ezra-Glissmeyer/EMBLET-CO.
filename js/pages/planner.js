@@ -60,7 +60,7 @@ export default async function planner(root, ctx) {
         kpi('Production runs needed', num(make.length), `${num(make.reduce((s, p) => s + p.qty, 0))} units to make`, make.length ? 'warn' : ''));
       const picked = new Set(runouts.filter(r => r.past).flatMap(r => r.planned.map(p => p.key)));
       alerts.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Raw materials that will run out'), h('span', { class: 'spacer' }),
-        h('button', { class: 'tan', onclick: e => run(e.target, async () => { const sel = planned.filter(p => picked.has(p.key)); if (!sel.length) throw new Error('Tick rows to order.'); const m = await convertPlanned(sel, isMgr); toast('Created ' + m.join(', ')); await go(); }) }, 'Order selected now')),
+        h('button', { class: 'tan', onclick: e => run(e.target, async () => { const sel = planned.filter(p => picked.has(p.key)); if (!sel.length) throw new Error('Tick rows to order.'); const m = await convertPlanned(sel, isMgr); toast('Created ' + m.join(', ')); if (m.skipped) toast(`Skipped ${m.skipped.join(', ')}: only managers can create purchase orders.`, 'info', 7000); await go(); }) }, 'Order selected now')),
         table([
           { key: 'pick', label: '', fmt: r => h('input', { type: 'checkbox', checked: r.planned.every(p => picked.has(p.key)), onchange: e => r.planned.forEach(p => e.target.checked ? picked.add(p.key) : picked.delete(p.key)) }) },
           { key: 'item', label: 'Material', fmt: r => h('div', {}, h('b', {}, r.item.sku), ' ', r.item.name) },

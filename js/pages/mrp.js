@@ -13,7 +13,10 @@ export async function loadRun(runId) {
 
 export function mrpGrid(rec, onPeg) {
   const w = rec.weeks;
-  const row = (label, key, cls) => h('tr', {}, h('td', {}, label), ...w.map(x => {
+  // beginning balance ("week 0") = what week 1's projected on hand started from
+  const start = Number(w[0].proj_on_hand) - Number(w[0].sched_receipts) + Number(w[0].gross_req) - Number(w[0].planned_receipt);
+  const row = (label, key, cls) => h('tr', {}, h('td', {}, label),
+    h('td', { class: 'num', style: { background: 'var(--paper)', fontWeight: key === 'proj_on_hand' ? 700 : 400 } }, key === 'proj_on_hand' ? qty(start) : ''), ...w.map(x => {
     const v = Number(x[key]);
     const c = typeof cls === 'function' ? cls(x, v) : '';
     return h('td', { class: 'num ' + c }, v ? qty(v) : (key === 'proj_on_hand' ? '0' : '·'));
@@ -26,15 +29,15 @@ export function mrpGrid(rec, onPeg) {
       past ? badge('BELOW_ROP', 'Release date already past!') : null, h('span', { class: 'sp' }),
       h('button', { class: 'sm', onclick: () => onPeg(it) }, 'Pegging ⟶ which orders?')),
     h('div', { style: { overflowX: 'auto' } }, h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Week of'), ...w.map(x => h('th', { class: 'num' }, `Wk ${x.week_no} · ${fmtDate(x.week_start).replace(/, \d{4}/, '')}`)))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Week of'), h('th', { class: 'num', title: 'Sellable on hand right now (all locations except QA Hold)' }, 'On hand now'), ...w.map(x => h('th', { class: 'num' }, `Wk ${x.week_no} · ${fmtDate(x.week_start).replace(/, \d{4}/, '')}`)))),
       h('tbody', {},
         row('Gross requirements', 'gross_req'),
         row('Scheduled receipts', 'sched_receipts'),
         row('Projected on hand', 'proj_on_hand', (x, v) => v < 0 ? 'neg' : ''),
         row('Net requirements', 'net_req', (x, v) => v > 0 ? 'neg' : ''),
         row('Planned order receipt', 'planned_receipt', (x, v) => v > 0 ? 'por' : ''),
-        h('tr', {}, h('td', {}, 'Planned order release'), ...w.map(x => h('td', { class: 'num ' + (x.planned_release > 0 ? 'por' : '') }, x.planned_release > 0 ? qty(x.planned_release) : '·'))),
-        h('tr', {}, h('td', {}, 'Order-by (release) date'), ...w.map(x => h('td', { class: 'num ' + (x.past_due ? 'past' : '') }, x.release_date ? fmtDate(x.release_date).replace(/, \d{4}/, '') + (x.past_due ? ' ⚠' : '') : '·')))))));
+        h('tr', {}, h('td', {}, 'Planned order release'), h('td', { style: { background: 'var(--paper)' } }), ...w.map(x => h('td', { class: 'num ' + (x.planned_release > 0 ? 'por' : '') }, x.planned_release > 0 ? qty(x.planned_release) : '·'))),
+        h('tr', {}, h('td', {}, 'Order-by (release) date'), h('td', { style: { background: 'var(--paper)' } }), ...w.map(x => h('td', { class: 'num ' + (x.past_due ? 'past' : '') }, x.release_date ? fmtDate(x.release_date).replace(/, \d{4}/, '') + (x.past_due ? ' ⚠' : '') : '·')))))));
 }
 
 export async function showPegging(runId, it) {
@@ -48,9 +51,14 @@ export async function showPegging(runId, it) {
 }
 
 export async function convertPlanned(list, isMgr) {
-  const buy = list.filter(p => ['raw', 'resale'].includes(p.item.item_type)), make = list.filter(p => !['raw', 'resale'].includes(p.item.item_type));
-  if (buy.length && !isMgr) throw new Error('Only managers can create purchase orders.');
+  let buy = list.filter(p => ['raw', 'resale'].includes(p.item.item_type));
+  const make = list.filter(p => !['raw', 'resale'].includes(p.item.item_type));
   const made = [];
+  // production staff can create production orders but not POs: make what they can, and say what was skipped
+  if (buy.length && !isMgr) {
+    if (!make.length) throw new Error('Only managers can create purchase orders. Ask a manager to convert the "Buy" lines.');
+    made.skipped = buy.map(p => p.item.sku); buy = [];
+  }
   const bySup = {};
   for (const p of buy) { if (!p.item.preferred_supplier_id) throw new Error(p.item.sku + ' has no preferred supplier'); (bySup[p.item.preferred_supplier_id] ||= []).push(p); }
   for (const [sid, ps] of Object.entries(bySup)) {
@@ -95,7 +103,9 @@ export default async function mrp(root, ctx) {
     summary.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Planned orders'), h('span', { class: 'muted' }, `run #${runId} · ${lot.value === 'EOQ' ? 'EOQ' : 'lot-for-lot'}`), h('span', { class: 'spacer' }),
       h('button', { class: 'tan', onclick: e => run(e.target, async () => {
         const sel = planned.filter(p => picked.has(p.key)); if (!sel.length) throw new Error('Tick planned orders to convert.');
-        const made = await convertPlanned(sel, isMgr); toast('Created ' + made.join(', ')); await runIt(); }) }, 'Convert selected → POs / production orders')),
+        const made = await convertPlanned(sel, isMgr); toast('Created ' + made.join(', '));
+        if (made.skipped) toast(`Skipped ${made.skipped.join(', ')}: only managers can create purchase orders.`, 'info', 7000);
+        await runIt(); }) }, 'Convert selected → POs / production orders')),
       table([
         { key: 'pick', label: '', fmt: p => h('input', { type: 'checkbox', checked: picked.has(p.key), onchange: e => e.target.checked ? picked.add(p.key) : picked.delete(p.key) }) },
         { key: 'llc', label: 'Lvl', num: true }, { key: 'item', label: 'Item', fmt: p => `${p.item.sku} · ${p.item.name}` },
