@@ -126,16 +126,11 @@ grant select on v_catalog to authenticated;
 revoke select on sale_lines from authenticated;
 grant select (id, sale_id, line_no, item_id, qty, unit_price, line_discount, order_disc_alloc, net_amount, tax_amount, qty_returned, lot_no)
   on sale_lines to authenticated;
--- staff read full sale lines (incl. unit_cost) through this definer view, filtered to staff callers
-create or replace view v_sale_lines_staff as
-  select sl.* from sale_lines sl where app.is_staff();
-grant select on v_sale_lines_staff to authenticated;
+drop view if exists v_sale_lines_staff;   -- (staff reports read costs through the report functions instead)
 revoke select on sales from authenticated;
 grant select (id, receipt_no, sale_at, location_code, channel, customer_id, sales_order_id, cashier_id, subtotal,
               line_discounts, order_discount, tax_rate, tax, total, payment_method, note) on sales to authenticated;
-create or replace view v_sales_staff as
-  select s.* from sales s where app.is_staff();
-grant select on v_sales_staff to authenticated;
+drop view if exists v_sales_staff;
 
 -- ---------- Realtime ----------
 do $$

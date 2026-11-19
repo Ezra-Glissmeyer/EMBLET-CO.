@@ -13,6 +13,7 @@ const RULES = {
   review_period_days: [1, 90, 'Review period must be 1–90 days.'],
   usage_window_days: [14, 400, 'Usage window must be 14–400 days.'],
   cure_days: [0, 30, 'Cure time must be 0–30 days.'],
+  return_window_days: [0, 365, 'Return window must be 0–365 days.'],
   score_keep_min: [0, 100, 'Keep threshold must be 0–100.'],
   score_watch_min: [0, 100, 'Watch threshold must be 0–100.'],
 };
@@ -51,7 +52,8 @@ export default async function settings(root, ctx) {
       h('p', { class: 'muted' }, 'Stored in one row of the settings table. Saving changes every calculation that uses them immediately: tax on new sales, ROP, EOQ, safety stock, supplier ratings. Other signed-in users see the new values live.'),
       h('div', { class: 'grid g2' },
         h('div', { class: 'card' }, h('h2', {}, 'Sales'), field('Sales tax rate (%)', n('sales_tax_rate', '0.01', 100), 'Utah County combined rate is about 7.25%'),
-          field('Wholesale price (% of retail)', n('wholesale_price_pct', '0.5', 100)), field('Wholesale payment terms (days)', n('wholesale_terms_days', '1')),
+          field('Wholesale price (% of retail)', n('wholesale_price_pct', '0.5', 100)), field('Wholesale payment terms (days)', n('wholesale_terms_days', '1'), 'Default for wholesale accounts without their own terms'),
+          field('Return window (days)', n('return_window_days', '1'), 'Older receipts get a warning on the Returns screen'),
           field('Return policy (printed on receipts)', (f.return_policy = h('textarea', { rows: 3, oninput: () => { dirty = true; } }, s.return_policy)))),
         h('div', { class: 'card' }, h('h2', {}, 'Inventory ordering rules'), field('Ordering / setup cost per order ($)', n('ordering_cost', '0.01')),
           field('Annual holding cost (% of unit cost)', n('holding_cost_pct', '0.1', 100)), field('Service level z-value', n('service_z', '0.01'), '1.28 ≈ 90% · 1.65 ≈ 95% · 2.33 ≈ 99%'),

@@ -7,7 +7,8 @@ import { onChange } from '../lib/realtime.js';
 export default async function purchasing(root, ctx) {
   const isMgr = ['manager', 'admin'].includes(ctx.role);
   const [items, locs, suppliers, supItems] = await Promise.all([getItems(), getLocations(), q(sb.from('suppliers').select('*').eq('active', true).order('name')), q(sb.from('supplier_items').select('*'))]);
-  let view = ctx.params.get('tab') || 'pos';
+  let view = ['pos', 'receive', 'ap'].includes(ctx.params.get('tab')) ? ctx.params.get('tab') : 'pos';
+  if (view === 'ap' && !isMgr) view = 'pos';   // A/P is manager-only
   const body = h('div');
   root.append(h('div', { class: 'row' }, h('h1', {}, 'Purchasing'), h('div', { class: 'sp' }), isMgr ? h('button', { class: 'primary', onclick: () => newPO() }, '+ New purchase order') : null),
     h('p', { class: 'muted' }, 'Create PO → Order Sent (expected date = order date + supplier quoted lead time) → Received (full or partial) → Closed. Receipts raise inventory, update weighted-average cost and create an A/P invoice due per the supplier\'s terms.'),
@@ -133,7 +134,7 @@ export default async function purchasing(root, ctx) {
     take.addEventListener('change', sync); sync();
     modal({ title: `Pay ${inv.invoice_no} · ${inv.suppliers.name}`, body: h('div', {},
       h('p', {}, `Terms ${inv.suppliers.payment_terms} · invoiced ${fmtDate(inv.invoice_date)} · due ${fmtDate(inv.due_date)} · open balance `, h('b', {}, money(open))),
-      canDisc ? h('div', { class: 'callout' }, `2/10 Net 30: pay in full by ${fmtDate(inv.discount_date)} and save ${money(disc)}.`)
+      canDisc ? h('div', { class: 'callout' }, `${inv.suppliers.payment_terms}: pay in full by ${fmtDate(inv.discount_date)} and save ${money(disc)} (${Number(inv.discount_pct)}%).`)
         : inv.discount_pct > 0 ? h('div', { class: 'callout warn' }, `The 2% early-payment window closed on ${fmtDate(inv.discount_date)}.`) : null,
       h('div', { class: 'fields' }, field('Amount', amt), field('Payment date', date)), h('label', { class: 'row' }, take, 'Take the early-payment discount'), note),
       actions: [{ label: 'Cancel' }, { label: 'Record payment', class: 'primary', onClick: async () => {

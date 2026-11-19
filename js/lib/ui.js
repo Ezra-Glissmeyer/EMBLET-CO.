@@ -68,7 +68,10 @@ export function badge(status, label) {
   return h('span', { class: 'badge ' + c }, label || l);
 }
 export const typeLabel = t => ({ raw: 'Raw material', finished: 'Finished good', kit: 'Gift set (kit)', resale: 'Resale' }[t] || t);
-export const locName = c => ({ WKS: 'Workshop – Orem', WHS: 'Warehouse – Springville', STR: 'Storefront – Provo', QAH: 'QA Hold' }[c] || c);
+// location names come from the locations table (loaded at sign-in); these are only a fallback before that
+let LOC = { WKS: 'Workshop – Orem', WHS: 'Warehouse – Springville', STR: 'Storefront – Provo', QAH: 'QA Hold' };
+export function setLocNames(list) { LOC = Object.fromEntries(list.map(l => [l.code, l.name])); }
+export const locName = c => LOC[c] || c;
 
 // ---------- feedback ----------
 export function toast(msg, type = 'ok', ms = 3800) {

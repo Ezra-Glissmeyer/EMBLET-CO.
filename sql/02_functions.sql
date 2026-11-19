@@ -6,6 +6,10 @@
 -- Reports are views / functions so every number recalculates live.
 -- =====================================================================
 
+-- Upgrades for databases built before these settings existed (safe to re-run)
+alter table settings add column if not exists return_window_days int not null default 30;
+drop view if exists v_on_hand;
+
 -- ---------------------------------------------------------------------
 -- 0. Small helpers
 -- ---------------------------------------------------------------------
@@ -593,7 +597,8 @@ begin
   if v_pay = 'ACCOUNT' then
     select receipt_no into v_inv from sales where id = v_sale;
     insert into ar_invoices(invoice_no, customer_id, sale_id, invoice_date, due_date, amount)
-    values (v_inv, c.id, v_sale, app.biz_date(p_at), app.biz_date(p_at) + greatest(c.terms_days, 0),
+    values (v_inv, c.id, v_sale, app.biz_date(p_at),
+            app.biz_date(p_at) + coalesce(nullif(c.terms_days, 0), (select wholesale_terms_days from settings where id = 1)),   -- customer terms, else Settings default
             (select total from sales where id = v_sale));
   end if;
   return v_sale;
@@ -1229,11 +1234,6 @@ end $$;
 -- ---------------------------------------------------------------------
 -- 12. REPORTING VIEWS (security_invoker => RLS of the caller applies)
 -- ---------------------------------------------------------------------
-create or replace view v_on_hand with (security_invoker = true) as
-select b.item_id, i.sku, i.name, i.item_type, i.category, i.uom, b.location_code, l.name location_name, l.sellable,
-       b.qty, i.avg_cost, round(b.qty * i.avg_cost, 2) value
-  from inventory_balances b join items i on i.id = b.item_id join locations l on l.code = b.location_code;
-
 create or replace view v_inventory_valuation with (security_invoker = true) as
 select i.id item_id, i.sku, i.name, i.item_type, i.category,
        case when i.item_type = 'raw' then 'Raw Materials' else 'Finished Goods' end inv_group,

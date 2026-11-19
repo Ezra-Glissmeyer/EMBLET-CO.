@@ -1,11 +1,12 @@
-import { sb, q, rpc, getItems, getLocations } from '../lib/db.js';
+import { sb, q, rpc, getItems, getLocations, getSettings } from '../lib/db.js';
 import { h, money, qty, fmtDate, fmtDT, badge, table, tabs, modal, field, select, toast, run, isoDate, addDays, locName, loading, confirmBox, daysBetween } from '../lib/ui.js';
 import { onChange } from '../lib/realtime.js';
 import { showReceipt } from '../lib/docs.js';
 
 export default async function orders(root, ctx) {
   const [items, locs, customers] = await Promise.all([getItems(), getLocations(), q(sb.from('customers').select('id, name, customer_type').order('name'))]);
-  let view = 'open';
+  let view = ['open', 'back', 'all', 'ar'].includes(ctx.params.get('tab')) ? ctx.params.get('tab') : 'open';
+  if (view === 'ar' && !['manager', 'admin'].includes(ctx.role)) view = 'open';
   const body = h('div');
   const newBtn = h('button', { class: 'primary', onclick: () => newOrder() }, '+ New sales order');
   root.append(h('div', { class: 'row', style: { marginBottom: '8px' } }, h('div', {}, h('h1', {}, 'Sales orders'),
@@ -76,7 +77,8 @@ export default async function orders(root, ctx) {
   }
 
   async function openOrder(id) {
-    const so = await q(sb.from('sales_orders').select('*, customers(name, customer_type, email, phone), so_lines(*, items(sku, name))').eq('id', id).single());
+    const so = await q(sb.from('sales_orders').select('*, customers(name, customer_type, email, phone, terms_days), so_lines(*, items(sku, name))').eq('id', id).single());
+    const terms = so.customers.terms_days || (await getSettings()).wholesale_terms_days;
     const bal = await q(sb.from('inventory_balances').select('item_id, location_code, qty').in('item_id', so.so_lines.map(l => l.item_id)));
     const at = (iid, loc) => Number(bal.find(b => b.item_id === iid && b.location_code === loc)?.qty || 0);
     const invoices = await q(sb.from('sales').select('id, receipt_no, sale_at, total, payment_method').eq('sales_order_id', id).order('id'));
@@ -108,7 +110,7 @@ export default async function orders(root, ctx) {
       invoices.length ? h('div', { style: { marginTop: '12px' } }, h('h3', {}, 'Shipments / invoices'),
         ...invoices.map(i => h('div', { class: 'row' }, h('a', { href: 'javascript:void 0', onclick: () => showReceipt(i.id) }, i.receipt_no), h('span', {}, fmtDT(i.sale_at)), h('span', {}, money(i.total)), h('span', { class: 'muted' }, i.payment_method)))) : null,
       open && so.customers.customer_type !== 'wholesale' ? field('Customer pays by', pay) : null,
-      open && so.customers.customer_type === 'wholesale' ? h('p', { class: 'hint' }, 'Wholesale shipments are invoiced to Accounts Receivable (Net ' + 30 + '), tax-exempt for resale.') : null);
+      open && so.customers.customer_type === 'wholesale' ? h('p', { class: 'hint' }, `Wholesale shipments are invoiced to Accounts Receivable (Net ${terms}), tax-exempt for resale.`) : null);
     const actions = [{ label: 'Close' }];
     if (so.status === 'ORDER_PLACED') actions.unshift({ label: 'Cancel order', class: 'danger', onClick: async () => {
       if (!await confirmBox('Cancel order?', `Cancel ${so.so_no}? This cannot be undone.`, 'Cancel order', true)) return false;

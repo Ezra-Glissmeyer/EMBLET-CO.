@@ -54,7 +54,8 @@ export default async function financials(root) {
   }
 
   async function valuation() {
-    const [sum, rows] = await Promise.all([rpc('fn_inventory_summary'), q(sb.from('v_inventory_valuation').select('*').order('inv_group').order('sku'))]);
+    const [sum, rows, recon] = await Promise.all([rpc('fn_inventory_summary'), q(sb.from('v_inventory_valuation').select('*').order('inv_group').order('sku')),
+      q(sb.from('v_ledger_reconciliation').select('item_id, location_code, balance_qty, ledger_qty, difference').neq('difference', 0))]);
     const by = {};
     for (const r of rows) { const k = r.item_id; by[k] ||= { sku: r.sku, name: r.name, grp: r.inv_group, cost: r.avg_cost, WKS: 0, WHS: 0, STR: 0, QAH: 0, qty: 0, value: 0 }; by[k][r.location_code] += Number(r.qty); by[k].qty += Number(r.qty); by[k].value += Number(r.value); }
     const list = Object.values(by);
@@ -63,6 +64,9 @@ export default async function financials(root) {
       h('div', { class: 'kpis' }, kpi('Raw materials', money(g('Raw Materials')), `GL 1200: ${money(sum.gl_raw)}`), kpi('Finished goods', money(g('Finished Goods')), `GL 1210: ${money(sum.gl_finished)}`),
         kpi('Work in process', money(sum.wip_orders), `GL 1250: ${money(sum.gl_wip)}`), kpi('Total inventory', money(g('Raw Materials') + g('Finished Goods') + Number(sum.wip_orders)), 'at weighted average cost', 'good')),
       h('div', { class: 'callout', style: { marginBottom: '12px' } }, 'Sub-ledger (qty × weighted average cost) vs. general ledger: any difference is cents of rounding from averaging.'),
+      recon.length
+        ? h('div', { class: 'callout bad', style: { marginBottom: '12px' } }, `Ledger check FAILED: ${recon.length} item/location balance(s) differ from the inventory ledger.`)
+        : h('div', { class: 'callout', style: { marginBottom: '12px' } }, '✔ Ledger check: every on-hand balance equals the sum of its inventory-ledger transactions (v_ledger_reconciliation shows 0 differences).'),
       h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'By location'), h('span', { class: 'spacer' })),
         table([{ key: 'location', label: 'Location' }, { key: 'raw', label: 'Raw materials', num: true, fmt: r => money(r.raw || 0) }, { key: 'finished', label: 'Finished goods', num: true, fmt: r => money(r.finished || 0) },
           { key: 't', label: 'Total', num: true, fmt: r => h('b', {}, money((r.raw || 0) + (r.finished || 0))) }], sum.by_location || [])),

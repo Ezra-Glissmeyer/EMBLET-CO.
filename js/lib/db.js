@@ -68,5 +68,10 @@ export async function findItem(code) {
   const c = String(code || '').trim().toUpperCase();
   if (!c) return null;
   const items = await getItems();
-  return items.find(i => i.barcode.toUpperCase() === c || i.sku.toUpperCase() === c) || null;
+  const hit = items.find(i => i.barcode.toUpperCase() === c || i.sku.toUpperCase() === c);
+  if (hit) return hit;
+  // not in this page's cached list (e.g. created by someone else since) — ask the database, then refresh the cache
+  const found = await rpc('fn_lookup_item', { p_code: c }).catch(() => []);
+  if (!found?.length) return null;
+  return (await getItems(true)).find(i => i.id === found[0].id) || null;
 }

@@ -1,6 +1,7 @@
 import { rpc, sb, q } from '../lib/db.js';
 import { h, money, num, pct, qty, kpi, table, badge, chart, fmtDate, isoDate, addDays, loading, palette } from '../lib/ui.js';
 import { onChange } from '../lib/realtime.js';
+import { hrefIf } from '../lib/nav.js';
 
 export default async function dashboard(root, ctx) {
   const tiles = h('div', { class: 'kpis' }, loading());
@@ -14,8 +15,8 @@ export default async function dashboard(root, ctx) {
     tiles,
     h('div', { class: 'grid g-side' },
       h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Net sales — last 30 days'), h('div', { class: 'spacer' }), h('span', { class: 'muted' }, 'by channel')), salesCanvas),
-      h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Open orders queue'), h('div', { class: 'spacer' }), h('a', { href: '#/orders' }, 'All orders →')), queueBox)),
-    h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Low stock & reorder alerts'), h('div', { class: 'spacer' }), h('a', { href: '#/reorder' }, 'Reorder review →')), lowBox));
+      h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Open orders queue'), h('div', { class: 'spacer' }), hrefIf('#/orders') ? h('a', { href: '#/orders' }, 'All orders →') : null), queueBox)),
+    h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h2', {}, 'Low stock & reorder alerts'), h('div', { class: 'spacer' }), hrefIf('#/reorder') ? h('a', { href: '#/reorder' }, 'Reorder review →') : null), lowBox));
 
   async function load() {
     const [k, series, ro, sos] = await Promise.all([
@@ -27,14 +28,14 @@ export default async function dashboard(root, ctx) {
     ]);
     asOf.textContent = 'As of ' + new Date(k.as_of).toLocaleTimeString();
     tiles.replaceChildren(
-      kpi("Today's net sales", money(k.today_net_sales), `${k.today_transactions} transactions · ${num(k.today_units)} units`, 'good', '#/reports'),
-      kpi('Gross margin (30 d)', pct(k.gm_30d_pct), `on ${money(k.net_sales_30d, true)} net sales`, '', ctx.role === 'cashier' ? null : '#/financials'),
+      kpi("Today's net sales", money(k.today_net_sales), `${k.today_transactions} transactions · ${num(k.today_units)} units`, 'good', hrefIf('#/reports')),
+      kpi('Gross margin (30 d)', pct(k.gm_30d_pct), `on ${money(k.net_sales_30d, true)} net sales`, '', hrefIf('#/financials')),
       kpi('Month-to-date', money(k.mtd_net_sales, true), 'net sales (GL)'),
-      kpi('Items below ROP', num(k.below_rop), `${k.review_soon} more due within review period`, k.below_rop ? 'bad' : 'good', '#/reorder'),
-      kpi('Open sales orders', num(k.open_sos), `${k.open_pickups} pickups · ${k.backordered_lines} backordered lines`, k.backordered_lines ? 'warn' : '', '#/orders'),
-      kpi('Open purchase orders', num(k.open_pos), k.late_pos ? `${k.late_pos} past expected date` : 'none late', k.late_pos ? 'warn' : '', '#/purchasing'),
-      kpi('Past-due invoices', num(k.past_due_invoices), money(k.past_due_amount) + ' owed to suppliers', k.past_due_invoices ? 'bad' : 'good', '#/suppliers'),
-      kpi('Production', `${k.mos_in_progress} running`, `${k.mos_planned} planned · QA hold ${qty(k.qa_hold_units)} units`, '', '#/production'),
+      kpi('Items below ROP', num(k.below_rop), `${k.review_soon} more due within review period`, k.below_rop ? 'bad' : 'good', hrefIf('#/reorder')),
+      kpi('Open sales orders', num(k.open_sos), `${k.open_pickups} pickups · ${k.backordered_lines} backordered lines`, k.backordered_lines ? 'warn' : '', hrefIf('#/orders')),
+      kpi('Open purchase orders', num(k.open_pos), k.late_pos ? `${k.late_pos} past expected date` : 'none late', k.late_pos ? 'warn' : '', hrefIf('#/purchasing')),
+      kpi('Past-due invoices', num(k.past_due_invoices), money(k.past_due_amount) + ' owed to suppliers', k.past_due_invoices ? 'bad' : 'good', ['manager', 'admin'].includes(ctx.role) ? '#/purchasing?tab=ap' : undefined),
+      kpi('Production', `${k.mos_in_progress} running`, `${k.mos_planned} planned · QA hold ${qty(k.qa_hold_units)} units`, '', hrefIf('#/production')),
       kpi('Inventory value', money(k.inventory_value, true), `A/R open ${money(k.ar_open, true)} · A/P open ${money(k.ap_open, true)}`));
 
     // chart: stacked by channel
@@ -61,7 +62,7 @@ export default async function dashboard(root, ctx) {
     ], low, { empty: 'Everything is above its reorder point. 🌲', rowClass: r => r.status === 'BELOW_ROP' ? 'low' : '' }));
 
     queueBox.replaceChildren(table([
-      { key: 'so_no', label: 'Order', fmt: r => h('a', { href: '#/orders?so=' + r.id }, r.so_no) },
+      { key: 'so_no', label: 'Order', fmt: r => hrefIf('#/orders') ? h('a', { href: '#/orders?so=' + r.id }, r.so_no) : h('b', {}, r.so_no) },
       { key: 'customer', label: 'Customer', fmt: r => r.customers?.name },
       { key: 'requested_date', label: 'Due', fmt: r => h('span', { style: { whiteSpace: 'nowrap' } }, fmtDate(r.requested_date).replace(/, \d{4}/, '')) },
       { key: 'status', label: '', fmt: r => badge(r.status) },

@@ -1,39 +1,10 @@
 // App shell: auth, role-based navigation, hash router, realtime status.
-import { sb, q, configured, getItems, invalidateItems, invalidateSettings } from './lib/db.js';
-import { h, toast, showError } from './lib/ui.js';
+import { sb, q, configured, getItems, getLocations, invalidateItems, invalidateSettings } from './lib/db.js';
+import { h, toast, showError, setLocNames } from './lib/ui.js';
 import { startRealtime, stopRealtime, onChange } from './lib/realtime.js';
 
-const STAFF = ['manager', 'cashier', 'production'];
-export const ROUTES = [
-  { grp: 'Operations' },
-  { path: 'dashboard', title: 'Dashboard', ic: '◎', roles: STAFF, mod: './pages/dashboard.js' },
-  { path: 'pos', title: 'Point of Sale', ic: '🛒', roles: ['manager', 'cashier'], mod: './pages/pos.js' },
-  { path: 'orders', title: 'Sales Orders', ic: '📦', roles: ['manager', 'cashier'], mod: './pages/orders.js', pill: 'open_pickups' },
-  { path: 'returns', title: 'Returns & Exchanges', ic: '↺', roles: ['manager', 'cashier'], mod: './pages/returns.js' },
-  { grp: 'Inventory' },
-  { path: 'inventory', title: 'Inventory', ic: '▦', roles: STAFF, mod: './pages/inventory.js' },
-  { path: 'items', title: 'Items & BOMs', ic: '🧾', roles: STAFF, mod: './pages/items.js' },
-  { path: 'labels', title: 'Barcode Labels', ic: '▥', roles: STAFF, mod: './pages/labels.js' },
-  { grp: 'Make & Buy' },
-  { path: 'production', title: 'Production', ic: '🕯️', roles: ['manager', 'production'], mod: './pages/production.js' },
-  { path: 'purchasing', title: 'Purchasing', ic: '🚚', roles: ['manager', 'production'], mod: './pages/purchasing.js' },
-  { path: 'suppliers', title: 'Suppliers & Scorecard', ic: '★', roles: ['manager'], mod: './pages/suppliers.js' },
-  { grp: 'Planning' },
-  { path: 'reorder', title: 'Reorder Review', ic: '⟳', roles: ['manager', 'production'], mod: './pages/reorder.js' },
-  { path: 'mrp', title: 'MRP', ic: '⧉', roles: ['manager', 'production'], mod: './pages/mrp.js' },
-  { path: 'planner', title: 'Holiday Planner', ic: '❄', roles: ['manager', 'production'], mod: './pages/planner.js' },
-  { grp: 'Insights' },
-  { path: 'financials', title: 'Financials', ic: '$', roles: ['manager'], mod: './pages/financials.js' },
-  { path: 'reports', title: 'Reports', ic: '📈', roles: ['manager'], mod: './pages/reports.js' },
-  { grp: 'Shop' },
-  { path: 'shop', title: 'Shop Emblet', ic: '🌲', roles: ['customer'], mod: './pages/shop.js' },
-  { path: 'myorders', title: 'My Orders', ic: '📦', roles: ['customer'], mod: './pages/myorders.js' },
-  { grp: 'System' },
-  { path: 'settings', title: 'Settings', ic: '⚙', roles: ['manager'], mod: './pages/settings.js' },
-  { path: 'about', title: 'About this System', ic: 'ⓘ', roles: [...STAFF, 'customer'], mod: './pages/about.js' },
-];
-const HOME = { admin: 'dashboard', manager: 'dashboard', cashier: 'pos', production: 'production', customer: 'shop' };
-const can = (r, role) => role === 'admin' ? r.roles.some(x => x !== 'customer') : r.roles.includes(role);
+import { ROUTES, HOME, can, setRole } from './lib/nav.js';
+export { ROUTES };
 
 const state = { session: null, profile: null, cleanup: null, shell: null };
 const app = document.getElementById('app');
@@ -192,6 +163,8 @@ async function onSession(session) {
     const prof = await q(sb.from('profiles').select('*').eq('id', session.user.id).maybeSingle());
     if (!prof) throw new Error('No profile found for this login. Run the SQL setup files (03_rls.sql creates profiles on signup).');
     state.profile = prof;
+    setRole(prof.role);
+    setLocNames(await getLocations());
     if (prof.role !== 'customer') getItems().catch(() => {});
     buildShell();
     route();

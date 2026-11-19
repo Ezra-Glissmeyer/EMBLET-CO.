@@ -9,7 +9,7 @@ const isSunday = d => new Date(d + 'T12:00:00').getDay() === 0;
 const CATS = [['', 'Everything'], ['candle_8oz', '8 oz Candles'], ['mini_tin', 'Mini Tins'], ['soap', 'Soap Bars'], ['gift_set', 'Gift Sets'], ['accessory', 'Accessories']];
 
 export default async function shop(root, ctx) {
-  const [allLocs, settings, me] = await Promise.all([getLocations(), getSettings(), q(sb.from('customers').select('id, name, customer_type').maybeSingle())]);
+  const [allLocs, settings, me] = await Promise.all([getLocations(), getSettings(), q(sb.from('customers').select('id, name, customer_type, terms_days').maybeSingle())]);
   const locs = allLocs.filter(l => l.sellable && l.code !== 'WKS');
   const wholesale = me?.customer_type === 'wholesale';
   // wholesale accounts are charged the wholesale price (Settings) and pay on account, tax-exempt — show them that price
@@ -23,7 +23,7 @@ export default async function shop(root, ctx) {
   root.append(
     h('div', { class: 'shop-hero' }, h('h1', {}, 'Cozy goods, poured in Utah County'),
       h('p', {}, 'Hand-poured soy & beeswax candles and small-batch soap. Order online and pick up at our Provo storefront or the Springville warehouse — we\'ll have it wrapped and waiting.')),
-    wholesale ? h('div', { class: 'callout', style: { marginBottom: '12px' } }, `Signed in as ${me.name} (wholesale account): prices shown are your wholesale prices (${Math.round(settings.wholesale_price_pct * 100)}% of retail). Orders are invoiced to your account on Net ${settings.wholesale_terms_days} terms, tax-exempt for resale.`) : null,
+    wholesale ? h('div', { class: 'callout', style: { marginBottom: '12px' } }, `Signed in as ${me.name} (wholesale account): prices shown are your wholesale prices (${Math.round(settings.wholesale_price_pct * 100)}% of retail). Orders are invoiced to your account on Net ${me.terms_days || settings.wholesale_terms_days} terms, tax-exempt for resale.`) : null,
     h('div', { class: 'row', style: { marginBottom: '14px' } }, catSel, famSel, h('div', { class: 'sp' }), cartBtn), grid);
 
   const updCart = () => { const n = [...cart.values()].reduce((s, c) => s + c.qty, 0); cartBtn.textContent = `🛍️ Pickup bag (${n})`; cartBtn.disabled = !n; };
@@ -52,7 +52,7 @@ export default async function shop(root, ctx) {
         const have = c.p.availability?.[loc.value] || 0;
         return h('div', { class: 'row', style: { borderBottom: '1px solid var(--line-2)', padding: '6px 0' } }, h('span', { class: 'sp' }, c.p.name, have < c.qty ? h('div', { class: 'hint', style: { color: 'var(--amber)' } }, `Only ${have} at ${locName(loc.value)} today — we'll have the rest ready by your pickup date.`) : null),
           h('input', { type: 'number', min: 0, value: c.qty, class: 'inline-in', onchange: e => { c.qty = Number(e.target.value); if (!c.qty) cart.delete(c.p.id); updCart(); draw2(); } }), h('span', { style: { width: '70px', textAlign: 'right' } }, money(c.qty * unit(c.p))));
-      }), h('div', { style: { textAlign: 'right', marginTop: '8px' } }, h('b', {}, 'Estimated total ' + money(total)), h('div', { class: 'hint' }, wholesale ? `Invoiced to your account, Net ${settings.wholesale_terms_days}. No sales tax (resale).` : 'Plus Utah sales tax. Pay at pickup.')));
+      }), h('div', { style: { textAlign: 'right', marginTop: '8px' } }, h('b', {}, 'Estimated total ' + money(total)), h('div', { class: 'hint' }, wholesale ? `Invoiced to your account, Net ${me.terms_days || settings.wholesale_terms_days}. No sales tax (resale).` : 'Plus Utah sales tax. Pay at pickup.')));
     };
     loc.addEventListener('change', draw2); draw2();
     modal({ title: 'Order for pickup', body: h('div', {}, h('div', { class: 'fields' }, field('Pickup location', loc), field('Pickup date', date)), field('Notes', notes), box),
@@ -60,7 +60,7 @@ export default async function shop(root, ctx) {
         const lines = [...cart.values()].filter(c => c.qty > 0).map(c => ({ item_id: c.p.id, qty: c.qty }));
         if (!lines.length) throw new Error('Your bag is empty.');
         if (!date.value || date.value < isoDate()) throw new Error('Choose a pickup date from today on.');
-        if (loc.value === 'STR' && isSunday(date.value)) throw new Error('Our Provo storefront is closed on Sundays — please pick another day.');
+        if (loc.value === 'STR' && isSunday(date.value)) throw new Error(`${locName('STR')} is closed on Sundays — please pick another day.`);
         const r = await rpc('create_sales_order', { p_customer_id: null, p_location: loc.value, p_requested_date: date.value, p_lines: lines, p_notes: notes.value || 'Website pickup order' });
         cart.clear(); updCart(); toast(`Thanks! Order ${r.so_no} placed — see My Orders.`); ctx.go('myorders'); return true; } }] });
   }

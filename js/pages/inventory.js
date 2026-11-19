@@ -2,13 +2,14 @@ import { sb, q, rpc, getItems, getLocations, getReasons, findItem } from '../lib
 import { h, money, qty, fmtDT, badge, table, tabs, toast, run, select, field, empty, loading, typeLabel, downloadCSV, modal } from '../lib/ui.js';
 import { scanField } from '../lib/scanner.js';
 import { onChange } from '../lib/realtime.js';
+import { hrefIf } from '../lib/nav.js';
 
 export default async function inventory(root, ctx) {
   const [items, locs, adjReasons] = await Promise.all([getItems(), getLocations(), getReasons('ADJUST')]);
-  let view = ctx.params.get('tab') || 'grid';
+  let view = ['grid', 'transfer', 'adjust', 'count', 'ledger'].includes(ctx.params.get('tab')) ? ctx.params.get('tab') : 'grid';
   const body = h('div');
   root.append(h('div', { class: 'row' }, h('h1', {}, 'Inventory'), h('div', { class: 'sp' }),
-      h('a', { class: 'btn', href: '#/purchasing?tab=receive' }, '📥 Scan to receive (PO)'), h('a', { class: 'btn', href: '#/orders' }, 'Backorders →')),
+      hrefIf('#/purchasing') ? h('a', { class: 'btn', href: '#/purchasing?tab=receive' }, '📥 Scan to receive (PO)') : null, hrefIf('#/orders') ? h('a', { class: 'btn', href: '#/orders?tab=back' }, 'Backorders →') : null),
     h('p', { class: 'muted' }, 'On-hand quantities come from a single append-only inventory ledger; the balance table is maintained from it and reconciles exactly.'),
     tabs([['grid', 'On hand by location'], ['transfer', 'Transfer'], ['adjust', 'Adjust'], ['count', 'Cycle count'], ['ledger', 'Item history (ledger)']], view, k => { view = k; render(); }), body);
 

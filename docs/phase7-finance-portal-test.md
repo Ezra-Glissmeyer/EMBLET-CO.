@@ -87,7 +87,7 @@ Switch **Sales by** to Week or Day and **Run reports** to see the seasonality.
    - Each card shows availability, e.g. "46 at Storefront · 0 at Warehouse".
    - Only Shop, My Orders and About are in the menu.
 3. **Add** Ezra's Embers twice and Oatmeal Hearth once → **🛍️ Pickup bag (3)**. **Expect:** Estimated total **$56.50**, "Plus Utah sales tax. Pay at pickup."
-4. Set **Pickup date** to a **Sunday** → **Place pickup order**. **Expect:** "Our Provo storefront is closed on Sundays." Change it to a Monday → **Place pickup order**. **Expect:** "Thanks! Order SO-… placed", and you land on **My Orders** with "Order placed — we're getting it ready".
+4. Set **Pickup date** to a **Sunday** → **Place pickup order**. **Expect:** "Storefront – Provo is closed on Sundays — please pick another day." Change it to a Monday → **Place pickup order**. **Expect:** "Thanks! Order SO-… placed", and you land on **My Orders** with "Order placed — we're getting it ready".
    ```sql
    select so_no, channel, status, location_code, requested_date, created_by from sales_orders order by id desc limit 1;
    -- ONLINE_PICKUP | ORDER_PLACED | STR | the Monday | Hannah's user id

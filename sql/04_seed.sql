@@ -513,7 +513,7 @@ begin
           -- supplier personality: 1 reliable, 2 often late, 3 short-ships (and late), 4-6 mixed
           v_late := case v_sup
              when 1 then case when random()::numeric < 0.08 then -1 else 0 end
-             when 2 then case when random()::numeric < 0.42 then 1 + floor(random()::numeric * 4)::int else 0 end
+             when 2 then case when random()::numeric < 0.38 then 1 + floor(random()::numeric * 3)::int else 0 end
              when 3 then case when random()::numeric < 0.62 then 3 + floor(random()::numeric * 5)::int else 0 end
              when 4 then case when random()::numeric < 0.25 then 1 + floor(random()::numeric * 3)::int else 0 end
              when 5 then case when random()::numeric < 0.30 then 1 + floor(random()::numeric * 4)::int else 0 end
@@ -842,21 +842,40 @@ begin
   -- Start two soap / mini-tin / gift-set runs at whatever size the materials allow (12-unit multiples, up to one batch).
   -- Sized from what is actually on hand, so this never depends on what the simulation happened to leave.
   -- (8 oz candles are left alone: the wet-wick story needs the Mallow Mal pour to be blocked.)
-  for r in select x.id, x.sku, x.q from (
-              select i.id, i.sku, i.category,
-                     least(i.batch_size, floor(min((app.on_hand(b.component_id,'WKS') + app.on_hand(b.component_id,'WHS')) / b.qty_per) / 12) * 12) q
-                from items i join bom_lines b on b.parent_id = i.id
-               where i.category in ('soap','mini_tin','gift_set') and i.active
-               group by i.id) x
-            where x.q >= 12
-            order by (x.q >= 24) desc, array_position(array['soap','mini_tin','gift_set'], x.category), x.q desc, x.sku
-            limit 2 loop
-    perform app._transfer(b.component_id, 'WHS', 'WKS', least(app.on_hand(b.component_id, 'WHS'), b.qty_per * r.q - app.on_hand(b.component_id, 'WKS')),
+  -- candidates in preference order; each is re-sized against what is left AFTER the previous run took its materials
+  -- (soaps share labels and wraps, so sizing them all up front can over-commit the same stock)
+  v_oh := 0;   -- runs started
+  for r in select i.id, i.sku, i.batch_size from items i
+            where i.category in ('soap','mini_tin','gift_set') and i.active and exists (select 1 from bom_lines b where b.parent_id = i.id)
+            order by array_position(array['soap','mini_tin','gift_set'], i.category), i.sku loop
+    exit when v_oh >= 2;
+    select least(r.batch_size, floor(min((app.on_hand(b.component_id,'WKS') + app.on_hand(b.component_id,'WHS')) / b.qty_per) / 12) * 12)
+      into function_item from bom_lines b where b.parent_id = r.id;
+    continue when coalesce(function_item, 0) < 24;
+    perform app._transfer(b.component_id, 'WHS', 'WKS', least(app.on_hand(b.component_id, 'WHS'), b.qty_per * function_item - app.on_hand(b.component_id, 'WKS')),
                           'Stage for production', v_ts - interval '20 minutes', u_prod)
-       from bom_lines b where b.parent_id = r.id and app.on_hand(b.component_id, 'WKS') < b.qty_per * r.q and app.on_hand(b.component_id, 'WHS') > 0;
-    v_mo := app._create_mo(r.id, r.q, 'WKS', v_ts, v_ts + make_interval(secs => (r.q / 24.0 * 3600)::float8), u_prod, 'Holiday build');
+       from bom_lines b where b.parent_id = r.id and app.on_hand(b.component_id, 'WKS') < b.qty_per * function_item and app.on_hand(b.component_id, 'WHS') > 0;
+    v_mo := app._create_mo(r.id, function_item, 'WKS', v_ts, v_ts + make_interval(secs => (function_item / 24.0 * 3600)::float8), u_prod, 'Holiday build');
     perform app._issue_mo(v_mo, v_ts + interval '10 minutes', u_prod);
     v_ts := v_ts + interval '30 minutes';
+    v_oh := v_oh + 1;
+  end loop;
+  -- fallback: if materials are so tight that no run of 24 fits, start the smallest feasible ones (12+)
+  for r in select i.id, i.batch_size from items i
+            where v_oh < 2 and i.category in ('soap','mini_tin','gift_set') and i.active
+              and not exists (select 1 from production_orders m where m.item_id = i.id and m.status = 'IN_PROGRESS')
+            order by i.sku loop
+    exit when v_oh >= 2;
+    select least(r.batch_size, floor(min((app.on_hand(b.component_id,'WKS') + app.on_hand(b.component_id,'WHS')) / b.qty_per) / 12) * 12)
+      into function_item from bom_lines b where b.parent_id = r.id;
+    continue when coalesce(function_item, 0) < 12;
+    perform app._transfer(b.component_id, 'WHS', 'WKS', least(app.on_hand(b.component_id, 'WHS'), b.qty_per * function_item - app.on_hand(b.component_id, 'WKS')),
+                          'Stage for production', v_ts - interval '20 minutes', u_prod)
+       from bom_lines b where b.parent_id = r.id and app.on_hand(b.component_id, 'WKS') < b.qty_per * function_item and app.on_hand(b.component_id, 'WHS') > 0;
+    v_mo := app._create_mo(r.id, function_item, 'WKS', v_ts, v_ts + make_interval(secs => (function_item / 24.0 * 3600)::float8), u_prod, 'Holiday build');
+    perform app._issue_mo(v_mo, v_ts + interval '10 minutes', u_prod);
+    v_ts := v_ts + interval '30 minutes';
+    v_oh := v_oh + 1;
   end loop;
   v_mo := app._create_mo((select id from items where sku = 'CND-MALLOW'), 144, 'WKS', app.day_start(v_today + 1) + interval '7 hours',
                          app.day_start(v_today + 1) + interval '15 hours', u_prod, 'Planned — issue tomorrow morning');

@@ -1,4 +1,4 @@
-import { sb, q, rpc, getItems, getReasons, findItem } from '../lib/db.js';
+import { sb, q, rpc, getItems, getReasons, findItem, getSettings } from '../lib/db.js';
 import { h, money, qty, fmtDT, badge, table, toast, run, select, field, empty, loading, tabs, modal, daysBetween, isoDate } from '../lib/ui.js';
 import { scanField } from '../lib/scanner.js';
 import { loadSale, showReceipt } from '../lib/docs.js';
@@ -7,7 +7,8 @@ import { onChange } from '../lib/realtime.js';
 const round2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 
 export default async function returnsPage(root) {
-  const [items, reasons] = await Promise.all([getItems(), getReasons('RETURN')]);
+  const [items, reasons, settings] = await Promise.all([getItems(), getReasons('RETURN'), getSettings()]);
+  const win = settings.return_window_days ?? 30;   // ?? 30 only until 02_functions.sql has been re-run
   let view = 'new';
   const body = h('div');
   root.append(h('h1', {}, 'Returns & exchanges'),
@@ -50,7 +51,7 @@ export default async function returnsPage(root) {
     body.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'fields' }, field('Receipt, invoice or sales order #', scan), field('Find by customer', searchIn)), results), found);
 
     function show(sale) {
-      const age = daysBetween(sale.sale_at.slice(0, 10), isoDate());
+      const age = daysBetween(isoDate(sale.sale_at), isoDate());
       const state = sale.lines.map(l => ({ l, qty: 0, reason: 'CHANGED_MIND', disp: 'RESTOCK' }));
       const newLines = [];
       let mode = 'return';
@@ -121,7 +122,7 @@ export default async function returnsPage(root) {
       found.replaceChildren(h('div', { class: 'card' },
         h('div', { class: 'card-h' }, h('h2', {}, sale.receipt_no), h('span', { class: 'muted' }, `${fmtDT(sale.sale_at)} · ${sale.location_code} · ${sale.customer || 'walk-in'} · paid ${sale.payment_method} · total ${money(sale.total)}`),
           h('span', { class: 'spacer' }), h('button', { class: 'sm', onclick: () => showReceipt(sale) }, 'View receipt')),
-        age > 30 ? h('div', { class: 'callout warn' }, `This receipt is ${age} days old — outside the 30-day return policy. Manager approval recommended.`) : null,
+        age > win ? h('div', { class: 'callout warn' }, `This receipt is ${age} days old — outside the ${win}-day return window (Settings). Manager approval recommended.`) : null,
         sale.returns.length ? h('div', { class: 'callout', style: { margin: '8px 0' } }, 'Previous returns: ' + sale.returns.map(r => `${r.return_no} (${money(r.refund_total)})`).join(', ')) : null,
         modeTabs, linesBox, h('div', { class: 'grid g2', style: { marginTop: '12px' } }, h('div', {}, refundField, newBox), h('div', { class: 'stack' }, sumBox, go))));
     }

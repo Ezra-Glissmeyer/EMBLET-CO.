@@ -42,6 +42,7 @@ create table settings (
   wholesale_terms_days  int     not null default 30,
   wholesale_price_pct   numeric(5,3) not null default 0.55,  -- wholesale price = retail x this
   cure_days             int     not null default 3,
+  return_window_days    int     not null default 30 check (return_window_days between 0 and 365),
   score_keep_min        numeric(5,1) not null default 90,
   score_watch_min       numeric(5,1) not null default 75,
   return_policy         text    not null default 'Returns or exchanges within 30 days with receipt. Candles that tunnel or have a drowned wick are always replaced — we stand behind every pour.',

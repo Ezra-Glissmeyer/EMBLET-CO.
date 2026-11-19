@@ -1,13 +1,14 @@
-import { sb, q, rpc, getItems, getReasons, friendly } from '../lib/db.js';
+import { sb, q, rpc, getItems, getReasons, friendly, getSettings } from '../lib/db.js';
 import { h, money, qty, pct, num, fmtDT, fmtDate, badge, table, tabs, modal, field, select, toast, run, kpi, chart, isoDate, addDays, loading, palette, locName, showError } from '../lib/ui.js';
 import { onChange } from '../lib/realtime.js';
 
 const localDT = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
 
 export default async function production(root, ctx) {
-  const [items, scrapReasons] = await Promise.all([getItems(), getReasons('SCRAP')]);
+  const [items, scrapReasons, settings] = await Promise.all([getItems(), getReasons('SCRAP'), getSettings()]);
+  const cure = settings.cure_days;   // candles cure this many days after pouring before they're sold (Settings)
   const made = items.filter(i => ['finished', 'kit'].includes(i.item_type) && i.active);
-  let view = ctx.params.get('tab') || 'orders';
+  let view = ['orders', 'done', 'report'].includes(ctx.params.get('tab')) ? ctx.params.get('tab') : 'orders';
   const body = h('div');
   root.append(h('div', { class: 'row' }, h('h1', {}, 'Production'), h('div', { class: 'sp' }), h('button', { class: 'primary', onclick: () => newMO() }, '+ New production order')),
     h('p', { class: 'muted' }, 'Create → Issue (consumes components per BOM into Work in Process) → Complete (good units go to finished goods at actual cost = components issued ÷ good units, so scrap raises unit cost).'),
@@ -16,7 +17,7 @@ export default async function production(root, ctx) {
 
   async function list(statuses) {
     body.replaceChildren(loading());
-    const rows = await q(sb.from('production_orders').select('*, items(sku, name, uom)').in('status', statuses).order(statuses.includes('PLANNED') ? 'planned_start' : 'actual_finish', { ascending: statuses.includes('PLANNED') }).limit(200));
+    const rows = await q(sb.from('production_orders').select('*, items(sku, name, uom, category)').in('status', statuses).order(statuses.includes('PLANNED') ? 'planned_start' : 'actual_finish', { ascending: statuses.includes('PLANNED') }).limit(200));
     body.replaceChildren(table([
       { key: 'mo_no', label: 'Order', fmt: r => h('b', {}, r.mo_no) }, { key: 'item', label: 'Item', fmt: r => `${r.items.sku} · ${r.items.name}` },
       { key: 'qty_planned', label: 'Qty', num: true, fmt: r => qty(r.qty_planned) }, { key: 'location_code', label: 'Loc' },
@@ -26,7 +27,9 @@ export default async function production(root, ctx) {
         { key: 'g', label: 'Good / scrap', num: true, fmt: r => r.status === 'COMPLETED' ? `${qty(r.qty_good)} / ${qty(r.qty_scrap)}` : '' },
         { key: 'sr', label: 'Scrap reason', fmt: r => r.scrap_reason || '' },
         { key: 'uc', label: 'Actual vs std', num: true, fmt: r => r.actual_unit_cost ? h('span', { style: { color: r.actual_unit_cost > r.std_unit_cost ? 'var(--red)' : 'var(--green)' } }, `${money(r.actual_unit_cost)} / ${money(r.std_unit_cost)}`) : '' },
-        { key: 'lot_no', label: 'Lot' }] : [{ key: 'cc', label: 'Issued cost', num: true, fmt: r => r.status === 'IN_PROGRESS' ? money(r.component_cost) : '' }]),
+        { key: 'lot_no', label: 'Lot' },
+        { key: 'cure', label: 'Sellable from', fmt: r => r.status !== 'COMPLETED' ? '' : ['candle_8oz', 'mini_tin'].includes(r.items.category)
+            ? fmtDate(addDays(isoDate(r.actual_finish), cure)) + (addDays(isoDate(r.actual_finish), cure) > isoDate() ? ' (curing)' : '') : 'no cure' }] : [{ key: 'cc', label: 'Issued cost', num: true, fmt: r => r.status === 'IN_PROGRESS' ? money(r.component_cost) : '' }]),
       { key: 'status', label: 'Status', fmt: r => badge(r.status) },
       { key: 'a', label: '', fmt: r => r.status === 'PLANNED' ? h('div', { class: 'row' },
           h('button', { class: 'sm', onclick: () => materials(r) }, 'Materials'),
